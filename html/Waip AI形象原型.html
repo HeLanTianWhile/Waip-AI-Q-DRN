@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='white' stroke='black' stroke-width='4'/%3E%3C/svg%3E">
+<title>Waip AI形象原型</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: #e5e5e5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .stage {
+    position: relative;
+    width: 25vmin;
+    height: 25vmin;
+  }
+  .circle {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 25vmin;
+    height: 25vmin;
+    background: #ffffff;
+    border: 0.9vmin solid #000000;
+    border-radius: 50%;
+    overflow: hidden;
+  }
+  .pupil {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 10vmin;
+    height: 10vmin;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5.2vmin;
+    transform: translate(-50%, -50%);
+    will-change: transform;
+  }
+  /* 瞳孔改为两条短竖线（小眼睛） */
+  .pupil-line {
+    width: 1.2vmin;
+    height: 7vmin;
+    background: #000000;
+    border-radius: 0.5vmin;
+  }
+  /* 外层：负责把 w 放到环绕轨道上（绕圆心旋转） */
+  .w {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform-origin: 0 0;
+    will-change: transform;
+    user-select: none;
+  }
+  /* 内层：负责补偿正立 + 按距离缩放（绕自身中心） */
+  .w-inner {
+    display: block;
+    font-size: 3vmin;
+    font-weight: 700;
+    line-height: 1;
+    color: #000000;
+    transform-origin: 50% 50%;
+    will-change: transform;
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="circle"><div class="pupil"><span class="pupil-line"></span><span class="pupil-line"></span></div></div>
+  </div>
+
+<script>
+  "use strict";
+  const N = 16;            // w 的数量
+  const R = 12.5;          // 大圆半径 (vmin)
+  const RW = 17.5;         // w 环绕半径 (vmin)，在大圆外圈
+  const PUPIL_R = 6.5;     // 瞳孔（竖线）活动半径参考 (vmin)，限制移动范围，竖线极限位置距大圆轮廓约 3vmin
+  const MAX_OFFSET = R - PUPIL_R - 0.8;   // 瞳孔可移动的最大距离 (vmin) ≈ 7.5
+  const ROT_PER_VMIN = 30;                // 瞳孔每移动 1vmin，w 转动 30°（转速只与瞳孔位置变化幅度有关）
+  const S_NEAR = 1.5;      // 瞳孔贴到某个 w 时，该 w 放大到 1.5 倍
+  const S_FAR = 0.85;      // w 离瞳孔最远时，缩小到 0.85 倍
+  const NEAR_D = RW - MAX_OFFSET;         // w 与瞳孔的最近距离
+  const FAR_D = Math.hypot(RW, MAX_OFFSET); // w 与瞳孔的最远距离
+
+  const stage = document.querySelector('.stage');
+  const pupil = document.querySelector('.pupil');
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // 生成 16 个 w：外层定位 + 内层正立/缩放
+  const outerEls = [], innerEls = [];
+  for (let i = 0; i < N; i++) {
+    const outer = document.createElement('span');
+    outer.className = 'w';
+    const inner = document.createElement('span');
+    inner.className = 'w-inner';
+    inner.textContent = 'w';
+    outer.appendChild(inner);
+    stage.appendChild(outer);
+    outerEls.push(outer);
+    innerEls.push(inner);
+  }
+
+  // 瞳孔位置（平滑）与 w 单向累积旋转角
+  let tx = 0, ty = 0;        // 瞳孔目标偏移（vmin）
+  let cx = 0, cy = 0;        // 瞳孔当前偏移
+  let acc = 0, prevX = 0, prevY = 0, last = 0;  // 累积角度（只增不减）、瞳孔上一帧位置、上一帧时间
+
+  function center() {
+    const r = stage.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+
+  // 用 pointermove 同时覆盖鼠标与触摸（监听在 window，整个屏幕都能响应）
+  window.addEventListener('pointermove', function (e) {
+    const c = center();
+    const dx = e.clientX - c.x, dy = e.clientY - c.y;
+    const dist = Math.hypot(dx, dy);
+    const vmin = Math.min(window.innerWidth, window.innerHeight) / 100;
+    const rawOff = dist / vmin;                       // 鼠标到圆心的距离（vmin）
+    const pupilOff = Math.min(rawOff, MAX_OFFSET);    // 瞳孔可视偏移，限制在大圆内
+    if (dist > 0.001) { tx = dx / dist * pupilOff; ty = dy / dist * pupilOff; }
+    else { tx = 0; ty = 0; }
+  });
+
+  function tick(ts) {
+    // 用帧时间差归一化，不同刷新率下转动速度一致
+    const dt = last ? (ts - last) / 16.667 : 1;
+    last = ts;
+    // 瞳孔位置平滑跟随
+    cx += (tx - cx) * 0.14;
+    cy += (ty - cy) * 0.14;
+    // 转速只与瞳孔位置变化幅度有关：瞳孔动得快 → 转得快；瞳孔不动 → 不转
+    const delta = Math.hypot(cx - prevX, cy - prevY);
+    acc += delta * ROT_PER_VMIN * dt;
+    prevX = cx; prevY = cy;
+
+    // 瞳孔朝鼠标方向偏移（始终在大圆内）
+    pupil.style.transform = 'translate(calc(-50% + ' + cx + 'vmin), calc(-50% + ' + cy + 'vmin))';
+
+    // 16 个 w：外层绕圆单向旋转（正立由内层补偿），旋转角 = acc
+    const rad = acc * Math.PI / 180;
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2 + rad;
+      outerEls[i].style.transform = 'rotate(' + a + 'rad) translate(0, -' + RW + 'vmin)';
+      // w 当前位置（相对圆心，vmin）
+      const wx = RW * Math.cos(a), wy = RW * Math.sin(a);
+      // 到瞳孔的距离 → 缩放：近则大，远则小
+      const d = Math.hypot(wx - cx, wy - cy);
+      const n = clamp((d - NEAR_D) / (FAR_D - NEAR_D), 0, 1);
+      const s = S_NEAR + (S_FAR - S_NEAR) * n;
+      // 内层：抵消外层旋转使 w 正立（底部朝下），并按距离缩放
+      innerEls[i].style.transform = 'rotate(' + (-a) + 'rad) scale(' + s.toFixed(3) + ')';
+    }
+    requestAnimationFrame(tick);
+  }
+  tick();
+</script>
+</body>
+</html>

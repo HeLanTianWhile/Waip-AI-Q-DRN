@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waip AI 尺寸</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 280px;
+    height: 84px;
+    background: rgba(30, 30, 32, 0.96);
+    color: #ececec;
+    font: 13px/1.5 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 16px;
+    border-radius: 10px;
+    -webkit-app-region: drag;
+    user-select: none;
+  }
+  .row { display: flex; align-items: center; gap: 12px; -webkit-app-region: no-drag; }
+  input[type=range] {
+    flex: 1;
+    accent-color: #4a9eff;
+    height: 20px;
+  }
+  .lab { min-width: 62px; text-align: right; font-variant-numeric: tabular-nums; color: #4a9eff; }
+  .cap { margin-bottom: 6px; font-size: 11px; color: #9a9aa0; }
+</style>
+</head>
+<body>
+  <div class="cap">拖动调整桌宠大小</div>
+  <div class="row">
+    <input id="sz" type="range" min="180" max="520" step="10" value="340">
+    <span class="lab" id="lab">340px</span>
+  </div>
+<script>
+  "use strict";
+  const r = document.getElementById('sz');
+  const lab = document.getElementById('lab');
+  function send() {
+    lab.textContent = r.value + 'px';
+    if (window.control && window.control.sendResize) window.control.sendResize(parseInt(r.value, 10));
+  }
+  r.addEventListener('input', send);
+</script>
+</body>
+</html>

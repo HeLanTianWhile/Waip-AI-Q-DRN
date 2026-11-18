@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waip AI</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: transparent;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    -webkit-app-region: drag;   /* 整个窗口可拖动 */
+    user-select: none;
+    cursor: move;
+  }
+  .stage { position: relative; width: 190px; height: 190px; }
+  .circle {
+    position: absolute;
+    left: 0; top: 0;
+    width: 190px;
+    height: 190px;
+    background: #ffffff;
+    border: 6px solid #000000;
+    border-radius: 50%;
+    overflow: hidden;
+  }
+  .pupil {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 66px;
+    height: 66px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 40px;
+    transform: translate(-50%, -50%);
+    will-change: transform;
+  }
+  .pupil-line {
+    width: 9px;
+    height: 56px;
+    background: #000000;
+    border-radius: 4px;
+  }
+  .w {
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 0; height: 0;          /* 锚点：精确落在窗口中心 */
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+  .w-inner {
+    position: absolute;
+    left: 0; top: 0;
+    display: block;
+    white-space: nowrap;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1;
+    color: #000000;
+    transform-origin: 50% 50%;
+    will-change: transform;
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="circle"><div class="pupil"><span class="pupil-line"></span><span class="pupil-line"></span></div></div>
+  </div>
+
+<script>
+  "use strict";
+  // ---- 桌宠参数（像素）----
+  const N = 16;
+  const RW = 140;          // w 环绕半径 (px)
+  const MAX_OFFSET = 48;   // 瞳孔可移动最大距离 (px)，保证不贴大圆轮廓
+  const ROT_PER_PX = 8.8;  // 瞳孔每移动 1px，w 转 8.8°（转速只与瞳孔位置变化幅度有关）
+  const S_NEAR = 2.2, S_FAR = 0.6;   // 近大远小：离眼睛越近越大（2.2 倍），越远越小（0.6 倍）
+  const NEAR_D = RW - MAX_OFFSET;
+  const FAR_D = Math.hypot(RW, MAX_OFFSET);
+  const PX_OFF = 28;       // 明暗检测点相对 w 中心向外偏移（避开 w 字符与大圆，落在桌面）
+
+  const pupil = document.querySelector('.pupil');
+  const stage = document.querySelector('.stage');
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  const outerEls = [], innerEls = [];
+  for (let i = 0; i < N; i++) {
+    const outer = document.createElement('span'); outer.className = 'w';
+    const inner = document.createElement('span'); inner.className = 'w-inner';
+    inner.textContent = 'w';
+    outer.appendChild(inner);
+    stage.appendChild(outer);
+    outerEls.push(outer); innerEls.push(inner);
+  }
+
+  let tx = 0, ty = 0;         // 瞳孔目标偏移 (px)
+  let cx = 0, cy = 0;         // 瞳孔当前偏移
+  let acc = 0, prevX = 0, prevY = 0, last = 0;
+
+  // ---- 明暗检测：w 背景暗→白字，背景亮→黑字（带平滑过渡）----
+  let screenData = null;
+  const cv = document.createElement('canvas');
+  const cctx = cv.getContext('2d');
+  const wLum = new Array(N).fill(0);      // 当前亮度（平滑中），0=黑
+  const wTarget = new Array(N).fill(0);   // 目标亮度，255=白
+
+  // 全局鼠标位置（相对窗口中心，px），由主进程 IPC 提供
+  window.pet.onMouse(function (d) {
+    const dist = Math.hypot(d.dx, d.dy);
+    const off = Math.min(dist, MAX_OFFSET);
+    if (dist > 0.001) { tx = d.dx / dist * off; ty = d.dy / dist * off; }
+    else { tx = 0; ty = 0; }
+  });
+
+  function sampleLum(sx, sy) {
+    const fx = (sx - screenData.displayX) / screenData.displayW;
+    const fy = (sy - screenData.displayY) / screenData.displayH;
+    if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return -1;
+    const px = Math.max(0, Math.min(screenData.thumbW - 1, Math.round(fx * screenData.thumbW)));
+    const py = Math.max(0, Math.min(screenData.thumbH - 1, Math.round(fy * screenData.thumbH)));
+    let sum = 0, cnt = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const X = px + dx, Y = py + dy;
+        if (X < 0 || X >= screenData.thumbW || Y < 0 || Y >= screenData.thumbH) continue;
+        const d = cctx.getImageData(X, Y, 1, 1).data;
+        sum += 0.299 * d[0] + 0.587 * d[1] + 0.114 * d[2];
+        cnt++;
+      }
+    }
+    return cnt ? sum / cnt : -1;
+  }
+
+  // 返回某 w 当前真实渲染中心（窗口内坐标），始终与显示位置一致
+  function wCenter(i) {
+    const r = innerEls[i].getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+
+  // 接收缩放信号（托盘"调整大小"滑动条），缩放整个桌宠
+  window.pet.onScale(function (s) {
+    stage.style.transform = 'scale(' + s + ')';
+  });
+
+  // 屏幕缩略图 + 窗口位置，由主进程 IPC 提供；仅在收到新图时刷新明暗目标
+  window.pet.onScreen(function (d) {
+    screenData = d;
+    const img = new Image();
+    img.onload = function () {
+      cv.width = img.width; cv.height = img.height;
+      cctx.drawImage(img, 0, 0);
+      for (let i = 0; i < N; i++) {
+        const c = wCenter(i);
+        const cc = window.innerWidth / 2;
+        let dx = c.x - cc, dy = c.y - cc;
+        const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+        const sx = screenData.winX + c.x + dx * PX_OFF;
+        const sy = screenData.winY + c.y + dy * PX_OFF;
+        const lum = sampleLum(sx, sy);
+        if (lum >= 0) wTarget[i] = lum < 128 ? 255 : 0;
+      }
+    };
+    img.src = d.image;
+  });
+
+  function tick(ts) {
+    const dt = last ? (ts - last) / 16.667 : 1;
+    last = ts;
+    cx += (tx - cx) * 0.14;
+    cy += (ty - cy) * 0.14;
+    const delta = Math.hypot(cx - prevX, cy - prevY);
+    acc += delta * ROT_PER_PX * dt;
+    prevX = cx; prevY = cy;
+
+    pupil.style.transform = 'translate(calc(-50% + ' + cx + 'px), calc(-50% + ' + cy + 'px))';
+
+    const rad = acc * Math.PI / 180;
+    for (let i = 0; i < N; i++) {
+      const a = (i / N) * Math.PI * 2 + rad;
+      outerEls[i].style.transform = 'rotate(' + a + 'rad) translate(0, -' + RW + 'px)';
+      // 用真实渲染位置计算近大远小，保证与显示一致
+      const c = wCenter(i);
+      const cc = window.innerWidth / 2;
+      const d = Math.hypot(c.x - (cc + cx), c.y - (cc + cy));
+      const n = clamp((d - NEAR_D) / (FAR_D - NEAR_D), 0, 1);
+      const s = S_NEAR + (S_FAR - S_NEAR) * n;
+      innerEls[i].style.transform = 'translate(-50%,-50%) rotate(' + (-a) + 'rad) scale(' + s.toFixed(3) + ')';
+      // 平滑过渡亮度，避免闪烁
+      wLum[i] += (wTarget[i] - wLum[i]) * 0.12;
+      const v = Math.round(wLum[i]);
+      innerEls[i].style.color = 'rgb(' + v + ',' + v + ',' + v + ')';
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+</script>
+</body>
+</html>

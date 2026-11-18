@@ -1,0 +1,14 @@
+{
+  "name": "waip-ai",
+  "productName": "Waip AI",
+  "version": "1.0.0",
+  "description": "Waip AI 眼睛桌宠（透明置顶窗口）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "icon": "node gen_icon.js"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}

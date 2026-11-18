@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d1117'/%3E%3Cpath d='M32 32 L12 16 M32 32 L52 14 M32 32 L52 50 M32 32 L12 50' stroke='%2358a6ff' stroke-width='2' opacity='0.7'/%3E%3Ccircle cx='32' cy='32' r='10' fill='%2358a6ff'/%3E%3Ccircle cx='12' cy='16' r='5' fill='%232ecc71'/%3E%3Ccircle cx='52' cy='14' r='5' fill='%233498db'/%3E%3Ccircle cx='52' cy='50' r='5' fill='%23e74c3c'/%3E%3Ccircle cx='12' cy='50' r='5' fill='%238892a0'/%3E%3C/svg%3E">
+<title>DRN 学习型网络 Demo</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2333;--line:#2d333b;
+        --text:#e6edf3;--dim:#8b949e;--acc:#58a6ff;--good:#3fb950;--warn:#d29922;--bad:#f85149}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--text);font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+  .wrap{max-width:1360px;margin:0 auto;padding:16px}
+  header{padding:8px 4px 12px}
+  h1{font-size:22px;font-weight:700}
+  .sub{color:var(--dim);font-size:14px;margin-top:6px;line-height:1.7}
+  .sub b{color:var(--acc);font-weight:600}
+  .layout{display:grid;grid-template-columns:1fr 330px;gap:14px}
+  @media(max-width:960px){.layout{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  svg#net{width:100%;height:auto;display:block;background:radial-gradient(circle at 50% 42%,#131a26 0%,#0b0f16 72%)}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 14px;padding:8px 2px 2px;font-size:12px;color:var(--dim)}
+  .legend .item{display:flex;align-items:center;gap:6px}
+  .dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .swatch{width:16px;height:4px;border-radius:2px;display:inline-block}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  button{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;
+         padding:9px 14px;font-size:13px;cursor:pointer;transition:.15s;min-height:40px}
+  button:hover{border-color:var(--acc);color:#fff}
+  button.active{background:var(--acc);color:#0d1117;border-color:var(--acc);font-weight:600}
+  .speed{margin:2px 0 10px;font-size:12px;color:var(--dim);display:flex;align-items:center;gap:8px}
+  .speed .val{color:var(--acc);font-weight:700;font-variant-numeric:tabular-nums}
+  .state-line{display:flex;align-items:center;gap:8px;font-size:13px;margin:2px 0 8px}
+  .pill{padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
+  .pill.run{background:rgba(88,166,255,.15);color:var(--acc);border:1px solid var(--acc)}
+  .pill.done{background:rgba(63,185,80,.15);color:var(--good);border:1px solid var(--good)}
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  .stat .k{font-size:11px;color:var(--dim)}
+  .stat .v{font-size:16px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+  .stat .v.small{font-size:13px}
+  h3{font-size:13px;color:var(--dim);font-weight:600;margin:14px 0 8px;letter-spacing:.5px}
+  #trend{width:100%;height:110px;display:block;background:var(--panel2);border:1px solid var(--line);border-radius:8px}
+  .motor-list{margin-top:4px}
+  .motor-row{display:flex;align-items:center;gap:8px;margin:4px 0}
+  .motor-row .nm{width:58px;font-size:11px;color:var(--dim);flex:none}
+  .motor-bar{flex:1;height:9px;background:var(--panel2);border-radius:5px;overflow:hidden;border:1px solid var(--line)}
+  .motor-fill{height:100%;width:0%;background:linear-gradient(90deg,#e74c3c,#ff6b6b);border-radius:5px;transition:width .25s}
+  .motor-val{width:44px;text-align:right;font-size:11px;font-variant-numeric:tabular-nums}
+  .rules{font-size:12px;color:var(--dim);line-height:1.9;margin-top:12px;border-top:1px dashed var(--line);padding-top:10px}
+  .rules b{color:var(--text)}
+  footer{color:#484f58;font-size:11px;text-align:center;padding:16px 0 6px}
+  .dim{color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>DRN 学习型网络 Demo</h1>
+    <div class="sub">持续传播直到<b>变得有规律</b>。感官每 8 步注入一轮信号；突触<b>频率越高、正向越多 → W 越大</b>，负信号多 → W 越小；
+      |W| 极小 → 剪突触；神经元长期不激活 / 持续负输出 → 消失；
+      路径"头→…→尾"经常共现 → 头部渐渐长出直达尾部的新突触。</div>
+  </header>
+
+  <div class="layout">
+    <div class="card">
+      <svg id="net" viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/>
+            <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <g id="edges"></g>
+        <g id="nodes"></g>
+      </svg>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="controls">
+          <button id="btnPlay">播放</button>
+          <button id="btnStep">单步</button>
+          <button id="btnJump">直达收敛</button>
+          <button id="btnReset">重置</button>
+          <button id="btnPain" title="疼痛源激活 → P 物质进入神经元 → 特异抑制神经元内的电信号（其他递质不受影响）">施加疼痛</button>
+        </div>
+        <div class="speed">播放速度：<span class="val" id="spdVal">1×</span>
+          <button id="btnSpeed" style="min-height:30px;padding:4px 10px">加速</button></div>
+        <div class="state-line">状态：<span class="pill run" id="statePill">运行中</span><span class="dim" id="stateTxt">t=0</span></div>
+        <div class="stat-grid">
+          <div class="stat"><div class="k">步数</div><div class="v" id="stT">0</div></div>
+          <div class="stat"><div class="k">存活神经元</div><div class="v" id="stNeu">-</div></div>
+          <div class="stat"><div class="k">突触数</div><div class="v" id="stSyn">-</div></div>
+          <div class="stat"><div class="k">|W| 均值</div><div class="v small" id="stW">-</div></div>
+          <div class="stat"><div class="k">已剪突触</div><div class="v small" id="stDelS">0</div></div>
+          <div class="stat"><div class="k">已剪神经元</div><div class="v small" id="stDelN">0</div></div>
+          <div class="stat"><div class="k">新长程连接</div><div class="v small" id="stNew">0</div></div>
+          <div class="stat"><div class="k">激活神经元</div><div class="v small" id="stAct">-</div></div>
+        </div>
+        <h3>结构演化（突触数 / 神经元数）</h3>
+        <svg id="trend" viewBox="0 0 300 110" preserveAspectRatio="none">
+          <line x1="0" y1="95" x2="300" y2="95" stroke="#2d333b" stroke-width="1"/>
+          <line x1="0" y1="5" x2="300" y2="5" stroke="#2d333b" stroke-width="1"/>
+          <polyline id="trendSyn" fill="none" stroke="#58a6ff" stroke-width="1.6" points=""/>
+          <polyline id="trendNeu" fill="none" stroke="#3fb950" stroke-width="1.6" points=""/>
+        </svg>
+        <h3>运动神经元输出（act ∈ [0,1]）</h3>
+        <div class="motor-list" id="motorList"></div>
+        <div class="rules">
+          <b>学习规则：</b><br>
+          1. 突触使用频率越高、传递正向信号越多 → W 越大；负信号越多 → W 越小<br>
+          2. |W| 小于 0.05 → 突触被裁剪<br>
+          3. 神经元 >150 步未激活，或连续 >80 步输出负信号 → 神经元消失（感官输入不裁剪）<br>
+          4. 路径"头→…→尾"反复共现 → 头部长出直达尾部的新突触（捷径）<br>
+          5. <b>P 物质（疼痛）</b>：圆心疼痛源激活 → P 物质进入神经元 → 只压住该神经元内的<b>电信号</b>（多巴胺/内啡肽/血清素不受影响）→ 运动输出被压制，越疼越动不了<br>
+          6. 网络持续运行，直到传播变得有规律（近期状态指标稳定）即收敛
+        </div>
+      </div>
+    </div>
+  </div>
+  <footer>DRN 量化版 · 学习型网络原型演示（随机初始连接，示意性质）· 疼痛源 = 圆心黄点</footer>
+</div>
+
+<script>
+"use strict";
+const DATA = {"neurons": [{"id": 0, "type": "visual", "B": 0.084}, {"id": 1, "type": "visual", "B": -0.285}, {"id": 2, "type": "visual", "B": -0.135}, {"id": 3, "type": "visual", "B": -0.166}, {"id": 4, "type": "visual", "B": 0.142}, {"id": 5, "type": "auditory", "B": 0.106}, {"id": 6, "type": "auditory", "B": 0.235}, {"id": 7, "type": "auditory", "B": -0.248}, {"id": 8, "type": "auditory", "B": -0.047}, {"id": 9, "type": "auditory", "B": -0.282}, {"id": 10, "type": "motor", "B": -0.169}, {"id": 11, "type": "motor", "B": 0.003}, {"id": 12, "type": "motor", "B": -0.284}, {"id": 13, "type": "motor", "B": -0.181}, {"id": 14, "type": "motor", "B": 0.09}, {"id": 15, "type": "motor", "B": 0.027}, {"id": 16, "type": "motor", "B": -0.168}, {"id": 17, "type": "motor", "B": 0.054}, {"id": 18, "type": "motor", "B": 0.186}, {"id": 19, "type": "motor", "B": -0.296}, {"id": 20, "type": "normal", "B": 0.183}, {"id": 21, "type": "normal", "B": 0.119}, {"id": 22, "type": "normal", "B": -0.096}, {"id": 23, "type": "normal", "B": -0.207}, {"id": 24, "type": "normal", "B": 0.274}, {"id": 25, "type": "normal", "B": -0.098}, {"id": 26, "type": "normal", "B": -0.244}, {"id": 27, "type": "normal", "B": -0.242}, {"id": 28, "type": "normal", "B": 0.208}, {"id": 29, "type": "normal", "B": 0.062}, {"id": 30, "type": "normal", "B": 0.184}, {"id": 31, "type": "normal", "B": 0.138}, {"id": 32, "type": "normal", "B": 0.022}, {"id": 33, "type": "normal", "B": 0.284}, {"id": 34, "type": "normal", "B": -0.073}, {"id": 35, "type": "normal", "B": 0.031}, {"id": 36, "type": "normal", "B": 0.198}, {"id": 37, "type": "normal", "B": 0.071}, {"id": 38, "type": "normal", "B": 0.217}, {"id": 39, "type": "normal", "B": 0.046}, {"id": 40, "type": "normal", "B": 0.123}, {"id": 41, "type": "normal", "B": -0.273}, {"id": 42, "type": "normal", "B": -0.163}, {"id": 43, "type": "normal", "B": -0.126}, {"id": 44, "type": "normal", "B": -0.252}, {"id": 45, "type": "normal", "B": -0.16}, {"id": 46, "type": "normal", "B": -0.239}, {"id": 47, "type": "normal", "B": -0.133}, {"id": 48, "type": "normal", "B": 0.081}, {"id": 49, "type": "normal", "B": -0.081}, {"id": 50, "type": "normal", "B": -0.078}, {"id": 51, "type": "normal", "B": -0.174}, {"id": 52, "type": "normal", "B": -0.14}, {"id": 53, "type": "normal", "B": 0.262}, {"id": 54, "type": "normal", "B": 0.089}, {"id": 55, "type": "normal", "B": 0.065}, {"id": 56, "type": "normal", "B": -0.197}, {"id": 57, "type": "normal", "B": 0.137}, {"id": 58, "type": "normal", "B": -0.202}, {"id": 59, "type": "normal", "B": -0.072}, {"id": 60, "type": "normal", "B": 0.294}, {"id": 61, "type": "normal", "B": 0.084}, {"id": 62, "type": "normal", "B": 0.034}, {"id": 63, "type": "normal", "B": 0.111}, {"id": 64, "type": "normal", "B": 0.206}, {"id": 65, "type": "normal", "B": 0.166}, {"id": 66, "type": "normal", "B": -0.163}, {"id": 67, "type": "normal", "B": -0.281}, {"id": 68, "type": "normal", "B": -0.111}, {"id": 69, "type": "normal", "B": -0.139}, {"id": 70, "type": "normal", "B": -0.173}, {"id": 71, "type": "normal", "B": 0.266}, {"id": 72, "type": "normal", "B": 0.226}, {"id": 73, "type": "normal", "B": -0.111}, {"id": 74, "type": "normal", "B": 0.093}, {"id": 75, "type": "normal", "B": -0.063}, {"id": 76, "type": "normal", "B": 0.249}, {"id": 77, "type": "normal", "B": -0.025}, {"id": 78, "type": "normal", "B": -0.141}, {"id": 79, "type": "normal", "B": -0.152}, {"id": 80, "type": "normal", "B": 0.037}, {"id": 81, "type": "normal", "B": -0.142}, {"id": 82, "type": "normal", "B": 0.051}, {"id": 83, "type": "normal", "B": 0.239}, {"id": 84, "type": "normal", "B": -0.06}, {"id": 85, "type": "normal", "B": -0.168}, {"id": 86, "type": "normal", "B": 0.299}, {"id": 87, "type": "normal", "B": 0.006}, {"id": 88, "type": "normal", "B": -0.245}, {"id": 89, "type": "normal", "B": -0.272}, {"id": 90, "type": "normal", "B": -0.234}, {"id": 91, "type": "normal", "B": 0.076}, {"id": 92, "type": "normal", "B": 0.175}, {"id": 93, "type": "normal", "B": -0.047}, {"id": 94, "type": "normal", "B": -0.262}, {"id": 95, "type": "normal", "B": -0.071}, {"id": 96, "type": "normal", "B": 0.298}, {"id": 97, "type": "normal", "B": 0.017}, {"id": 98, "type": "normal", "B": 0.283}, {"id": 99, "type": "normal", "B": 0.216}, {"id": 100, "type": "pain", "B": 0.0}], "synapses": [{"pre": 0, "post": 88, "W": 0.291, "gain": 1.15, "signal": "dopamine"}, {"pre": 0, "post": 93, "W": 0.401, "gain": 1.0, "signal": "electric"}, {"pre": 1, "post": 15, "W": -0.074, "gain": 1.0, "signal": "electric"}, {"pre": 1, "post": 38, "W": 0.755, "gain": 0.85, "signal": "serotonin"}, {"pre": 1, "post": 56, "W": 0.012, "gain": 1.0, "signal": "endorphin"}, {"pre": 1, "post": 21, "W": 0.593, "gain": 1.15, "signal": "dopamine"}, {"pre": 2, "post": 82, "W": -0.202, "gain": 1.0, "signal": "endorphin"}, {"pre": 2, "post": 65, "W": 0.063, "gain": 1.0, "signal": "endorphin"}, {"pre": 2, "post": 78, "W": 0.67, "gain": 1.0, "signal": "electric"}, {"pre": 2, "post": 26, "W": -0.281, "gain": 1.0, "signal": "electric"}, {"pre": 3, "post": 15, "W": 0.606, "gain": 1.0, "signal": "electric"}, {"pre": 3, "post": 47, "W": -0.417, "gain": 0.85, "signal": "serotonin"}, {"pre": 4, "post": 73, "W": 0.506, "gain": 1.05, "signal": "substanceP"}, {"pre": 4, "post": 11, "W": 0.765, "gain": 1.0, "signal": "electric"}, {"pre": 4, "post": 94, "W": 0.425, "gain": 1.0, "signal": "electric"}, {"pre": 5, "post": 85, "W": -0.376, "gain": 1.0, "signal": "endorphin"}, {"pre": 5, "post": 61, "W": -0.123, "gain": 1.0, "signal": "electric"}, {"pre": 5, "post": 71, "W": 0.686, "gain": 1.0, "signal": "endorphin"}, {"pre": 6, "post": 92, "W": -0.099, "gain": 0.85, "signal": "serotonin"}, {"pre": 6, "post": 40, "W": -0.078, "gain": 1.0, "signal": "electric"}, {"pre": 6, "post": 52, "W": -0.44, "gain": 1.0, "signal": "endorphin"}, {"pre": 7, "post": 2, "W": -0.448, "gain": 1.0, "signal": "electric"}, {"pre": 7, "post": 76, "W": 0.333, "gain": 1.15, "signal": "dopamine"}, {"pre": 7, "post": 71, "W": -0.434, "gain": 1.15, "signal": "dopamine"}, {"pre": 7, "post": 30, "W": 0.575, "gain": 1.15, "signal": "dopamine"}, {"pre": 8, "post": 66, "W": 0.27, "gain": 0.85, "signal": "serotonin"}, {"pre": 8, "post": 31, "W": 0.063, "gain": 1.0, "signal": "endorphin"}, {"pre": 9, "post": 74, "W": 0.254, "gain": 1.15, "signal": "dopamine"}, {"pre": 9, "post": 61, "W": -0.122, "gain": 0.85, "signal": "serotonin"}, {"pre": 9, "post": 32, "W": 0.582, "gain": 1.05, "signal": "substanceP"}, {"pre": 9, "post": 53, "W": 0.277, "gain": 1.15, "signal": "dopamine"}, {"pre": 9, "post": 25, "W": -0.703, "gain": 1.15, "signal": "dopamine"}, {"pre": 9, "post": 13, "W": 0.365, "gain": 1.0, "signal": "electric"}, {"pre": 10, "post": 32, "W": 0.058, "gain": 1.0, "signal": "endorphin"}, {"pre": 10, "post": 25, "W": -0.125, "gain": 1.0, "signal": "endorphin"}, {"pre": 11, "post": 60, "W": -0.643, "gain": 1.0, "signal": "electric"}, {"pre": 11, "post": 32, "W": 0.538, "gain": 1.0, "signal": "electric"}, {"pre": 11, "post": 9, "W": 0.682, "gain": 1.15, "signal": "dopamine"}, {"pre": 11, "post": 57, "W": -0.534, "gain": 1.0, "signal": "endorphin"}, {"pre": 12, "post": 62, "W": -0.797, "gain": 1.05, "signal": "substanceP"}, {"pre": 12, "post": 28, "W": -0.376, "gain": 1.05, "signal": "substanceP"}, {"pre": 12, "post": 52, "W": -0.344, "gain": 1.05, "signal": "substanceP"}, {"pre": 12, "post": 7, "W": 0.259, "gain": 1.0, "signal": "electric"}, {"pre": 12, "post": 22, "W": -0.552, "gain": 1.05, "signal": "substanceP"}, {"pre": 13, "post": 28, "W": -0.702, "gain": 1.0, "signal": "electric"}, {"pre": 13, "post": 7, "W": -0.709, "gain": 0.85, "signal": "serotonin"}, {"pre": 13, "post": 75, "W": -0.037, "gain": 1.0, "signal": "electric"}, {"pre": 13, "post": 95, "W": -0.548, "gain": 1.0, "signal": "electric"}, {"pre": 14, "post": 10, "W": -0.154, "gain": 1.0, "signal": "electric"}, {"pre": 14, "post": 24, "W": -0.406, "gain": 1.0, "signal": "electric"}, {"pre": 14, "post": 8, "W": -0.736, "gain": 1.0, "signal": "electric"}, {"pre": 14, "post": 77, "W": -0.129, "gain": 1.15, "signal": "dopamine"}, {"pre": 14, "post": 87, "W": 0.104, "gain": 1.0, "signal": "electric"}, {"pre": 14, "post": 31, "W": 0.696, "gain": 0.85, "signal": "serotonin"}, {"pre": 15, "post": 86, "W": -0.375, "gain": 1.0, "signal": "endorphin"}, {"pre": 15, "post": 92, "W": 0.275, "gain": 1.0, "signal": "endorphin"}, {"pre": 15, "post": 41, "W": -0.068, "gain": 0.85, "signal": "serotonin"}, {"pre": 16, "post": 1, "W": 0.798, "gain": 1.0, "signal": "electric"}, {"pre": 16, "post": 59, "W": -0.683, "gain": 1.15, "signal": "dopamine"}, {"pre": 17, "post": 65, "W": 0.609, "gain": 0.85, "signal": "serotonin"}, {"pre": 17, "post": 34, "W": -0.209, "gain": 1.0, "signal": "endorphin"}, {"pre": 17, "post": 16, "W": -0.548, "gain": 1.0, "signal": "electric"}, {"pre": 18, "post": 91, "W": -0.321, "gain": 1.0, "signal": "electric"}, {"pre": 18, "post": 39, "W": 0.702, "gain": 1.15, "signal": "dopamine"}, {"pre": 18, "post": 79, "W": -0.377, "gain": 1.0, "signal": "endorphin"}, {"pre": 18, "post": 84, "W": 0.388, "gain": 1.15, "signal": "dopamine"}, {"pre": 18, "post": 68, "W": -0.364, "gain": 1.0, "signal": "endorphin"}, {"pre": 18, "post": 1, "W": -0.463, "gain": 1.0, "signal": "electric"}, {"pre": 19, "post": 27, "W": -0.018, "gain": 1.0, "signal": "electric"}, {"pre": 19, "post": 88, "W": -0.652, "gain": 1.15, "signal": "dopamine"}, {"pre": 19, "post": 82, "W": 0.527, "gain": 1.05, "signal": "substanceP"}, {"pre": 19, "post": 34, "W": -0.794, "gain": 1.15, "signal": "dopamine"}, {"pre": 20, "post": 82, "W": 0.083, "gain": 1.05, "signal": "substanceP"}, {"pre": 20, "post": 34, "W": 0.097, "gain": 1.05, "signal": "substanceP"}, {"pre": 20, "post": 21, "W": -0.68, "gain": 1.15, "signal": "dopamine"}, {"pre": 21, "post": 70, "W": 0.084, "gain": 1.0, "signal": "electric"}, {"pre": 21, "post": 4, "W": -0.596, "gain": 1.05, "signal": "substanceP"}, {"pre": 21, "post": 48, "W": -0.217, "gain": 0.85, "signal": "serotonin"}, {"pre": 22, "post": 46, "W": 0.267, "gain": 1.0, "signal": "endorphin"}, {"pre": 22, "post": 27, "W": 0.448, "gain": 0.85, "signal": "serotonin"}, {"pre": 23, "post": 80, "W": 0.61, "gain": 1.0, "signal": "endorphin"}, {"pre": 23, "post": 96, "W": -0.513, "gain": 1.15, "signal": "dopamine"}, {"pre": 23, "post": 19, "W": 0.679, "gain": 1.0, "signal": "electric"}, {"pre": 23, "post": 31, "W": 0.484, "gain": 1.05, "signal": "substanceP"}, {"pre": 23, "post": 20, "W": -0.373, "gain": 1.0, "signal": "endorphin"}, {"pre": 24, "post": 49, "W": -0.444, "gain": 1.05, "signal": "substanceP"}, {"pre": 24, "post": 4, "W": -0.241, "gain": 1.05, "signal": "substanceP"}, {"pre": 25, "post": 29, "W": -0.162, "gain": 1.0, "signal": "endorphin"}, {"pre": 25, "post": 3, "W": 0.583, "gain": 0.85, "signal": "serotonin"}, {"pre": 25, "post": 85, "W": -0.238, "gain": 0.85, "signal": "serotonin"}, {"pre": 26, "post": 52, "W": -0.514, "gain": 0.85, "signal": "serotonin"}, {"pre": 26, "post": 87, "W": -0.739, "gain": 0.85, "signal": "serotonin"}, {"pre": 26, "post": 69, "W": -0.105, "gain": 1.0, "signal": "electric"}, {"pre": 26, "post": 43, "W": -0.102, "gain": 0.85, "signal": "serotonin"}, {"pre": 26, "post": 3, "W": -0.615, "gain": 1.0, "signal": "electric"}, {"pre": 26, "post": 14, "W": 0.639, "gain": 1.0, "signal": "electric"}, {"pre": 27, "post": 33, "W": -0.797, "gain": 1.05, "signal": "substanceP"}, {"pre": 27, "post": 5, "W": 0.299, "gain": 1.0, "signal": "electric"}, {"pre": 27, "post": 91, "W": -0.217, "gain": 1.0, "signal": "endorphin"}, {"pre": 28, "post": 86, "W": -0.298, "gain": 1.0, "signal": "electric"}, {"pre": 28, "post": 43, "W": 0.352, "gain": 1.15, "signal": "dopamine"}, {"pre": 29, "post": 65, "W": -0.156, "gain": 0.85, "signal": "serotonin"}, {"pre": 29, "post": 40, "W": 0.087, "gain": 0.85, "signal": "serotonin"}, {"pre": 29, "post": 86, "W": -0.127, "gain": 1.0, "signal": "endorphin"}, {"pre": 29, "post": 53, "W": 0.284, "gain": 1.05, "signal": "substanceP"}, {"pre": 30, "post": 79, "W": 0.077, "gain": 1.05, "signal": "substanceP"}, {"pre": 30, "post": 73, "W": -0.314, "gain": 1.15, "signal": "dopamine"}, {"pre": 30, "post": 39, "W": -0.112, "gain": 1.0, "signal": "endorphin"}, {"pre": 31, "post": 78, "W": 0.018, "gain": 1.0, "signal": "endorphin"}, {"pre": 31, "post": 84, "W": 0.254, "gain": 1.0, "signal": "endorphin"}, {"pre": 31, "post": 42, "W": 0.025, "gain": 0.85, "signal": "serotonin"}, {"pre": 31, "post": 60, "W": -0.264, "gain": 1.0, "signal": "electric"}, {"pre": 31, "post": 57, "W": 0.276, "gain": 1.0, "signal": "endorphin"}, {"pre": 31, "post": 87, "W": 0.491, "gain": 1.0, "signal": "endorphin"}, {"pre": 32, "post": 3, "W": 0.178, "gain": 1.05, "signal": "substanceP"}, {"pre": 32, "post": 5, "W": -0.071, "gain": 1.15, "signal": "dopamine"}, {"pre": 32, "post": 31, "W": -0.489, "gain": 1.0, "signal": "electric"}, {"pre": 33, "post": 64, "W": 0.628, "gain": 1.15, "signal": "dopamine"}, {"pre": 33, "post": 52, "W": 0.445, "gain": 1.15, "signal": "dopamine"}, {"pre": 33, "post": 31, "W": -0.519, "gain": 1.0, "signal": "endorphin"}, {"pre": 33, "post": 18, "W": 0.733, "gain": 1.0, "signal": "electric"}, {"pre": 33, "post": 84, "W": -0.057, "gain": 1.0, "signal": "electric"}, {"pre": 34, "post": 31, "W": 0.781, "gain": 1.0, "signal": "electric"}, {"pre": 34, "post": 15, "W": 0.153, "gain": 1.0, "signal": "electric"}, {"pre": 34, "post": 59, "W": 0.18, "gain": 1.05, "signal": "substanceP"}, {"pre": 34, "post": 17, "W": 0.351, "gain": 1.0, "signal": "electric"}, {"pre": 34, "post": 60, "W": -0.117, "gain": 1.0, "signal": "electric"}, {"pre": 34, "post": 86, "W": -0.087, "gain": 1.0, "signal": "electric"}, {"pre": 35, "post": 96, "W": 0.403, "gain": 0.85, "signal": "serotonin"}, {"pre": 35, "post": 61, "W": 0.425, "gain": 0.85, "signal": "serotonin"}, {"pre": 35, "post": 58, "W": -0.025, "gain": 1.0, "signal": "electric"}, {"pre": 36, "post": 35, "W": -0.425, "gain": 0.85, "signal": "serotonin"}, {"pre": 36, "post": 57, "W": -0.288, "gain": 0.85, "signal": "serotonin"}, {"pre": 36, "post": 9, "W": -0.671, "gain": 1.0, "signal": "electric"}, {"pre": 37, "post": 29, "W": 0.33, "gain": 1.0, "signal": "endorphin"}, {"pre": 37, "post": 50, "W": -0.136, "gain": 1.15, "signal": "dopamine"}, {"pre": 37, "post": 89, "W": 0.068, "gain": 0.85, "signal": "serotonin"}, {"pre": 38, "post": 7, "W": 0.714, "gain": 1.0, "signal": "electric"}, {"pre": 38, "post": 26, "W": 0.571, "gain": 1.15, "signal": "dopamine"}, {"pre": 38, "post": 54, "W": -0.191, "gain": 1.0, "signal": "electric"}, {"pre": 38, "post": 50, "W": 0.708, "gain": 1.15, "signal": "dopamine"}, {"pre": 38, "post": 99, "W": 0.406, "gain": 0.85, "signal": "serotonin"}, {"pre": 39, "post": 69, "W": -0.019, "gain": 1.0, "signal": "endorphin"}, {"pre": 39, "post": 96, "W": -0.103, "gain": 0.85, "signal": "serotonin"}, {"pre": 39, "post": 95, "W": -0.178, "gain": 1.15, "signal": "dopamine"}, {"pre": 39, "post": 70, "W": 0.359, "gain": 1.05, "signal": "substanceP"}, {"pre": 39, "post": 78, "W": 0.671, "gain": 1.05, "signal": "substanceP"}, {"pre": 40, "post": 69, "W": -0.666, "gain": 1.15, "signal": "dopamine"}, {"pre": 40, "post": 3, "W": -0.583, "gain": 1.05, "signal": "substanceP"}, {"pre": 40, "post": 51, "W": -0.509, "gain": 1.05, "signal": "substanceP"}, {"pre": 40, "post": 76, "W": -0.193, "gain": 0.85, "signal": "serotonin"}, {"pre": 40, "post": 73, "W": -0.072, "gain": 1.0, "signal": "endorphin"}, {"pre": 40, "post": 85, "W": 0.418, "gain": 0.85, "signal": "serotonin"}, {"pre": 41, "post": 35, "W": -0.769, "gain": 1.05, "signal": "substanceP"}, {"pre": 41, "post": 97, "W": -0.717, "gain": 1.0, "signal": "electric"}, {"pre": 41, "post": 54, "W": -0.441, "gain": 0.85, "signal": "serotonin"}, {"pre": 41, "post": 32, "W": 0.45, "gain": 1.15, "signal": "dopamine"}, {"pre": 41, "post": 10, "W": 0.243, "gain": 1.0, "signal": "electric"}, {"pre": 42, "post": 31, "W": 0.194, "gain": 1.15, "signal": "dopamine"}, {"pre": 42, "post": 25, "W": -0.598, "gain": 1.0, "signal": "endorphin"}, {"pre": 43, "post": 73, "W": 0.319, "gain": 1.05, "signal": "substanceP"}, {"pre": 43, "post": 27, "W": -0.532, "gain": 0.85, "signal": "serotonin"}, {"pre": 44, "post": 96, "W": -0.759, "gain": 1.0, "signal": "electric"}, {"pre": 44, "post": 92, "W": 0.121, "gain": 0.85, "signal": "serotonin"}, {"pre": 44, "post": 14, "W": 0.653, "gain": 1.0, "signal": "electric"}, {"pre": 44, "post": 20, "W": -0.165, "gain": 1.05, "signal": "substanceP"}, {"pre": 44, "post": 39, "W": -0.678, "gain": 1.0, "signal": "endorphin"}, {"pre": 44, "post": 13, "W": 0.305, "gain": 1.0, "signal": "electric"}, {"pre": 45, "post": 13, "W": -0.317, "gain": 1.0, "signal": "electric"}, {"pre": 45, "post": 90, "W": 0.489, "gain": 1.0, "signal": "electric"}, {"pre": 45, "post": 99, "W": 0.452, "gain": 1.0, "signal": "electric"}, {"pre": 46, "post": 69, "W": 0.01, "gain": 1.15, "signal": "dopamine"}, {"pre": 46, "post": 55, "W": -0.78, "gain": 0.85, "signal": "serotonin"}, {"pre": 46, "post": 85, "W": 0.516, "gain": 1.05, "signal": "substanceP"}, {"pre": 46, "post": 48, "W": -0.106, "gain": 1.15, "signal": "dopamine"}, {"pre": 47, "post": 82, "W": -0.518, "gain": 1.05, "signal": "substanceP"}, {"pre": 47, "post": 59, "W": 0.745, "gain": 1.0, "signal": "electric"}, {"pre": 47, "post": 91, "W": 0.185, "gain": 0.85, "signal": "serotonin"}, {"pre": 47, "post": 19, "W": 0.671, "gain": 1.0, "signal": "electric"}, {"pre": 48, "post": 60, "W": 0.563, "gain": 0.85, "signal": "serotonin"}, {"pre": 48, "post": 56, "W": -0.354, "gain": 1.15, "signal": "dopamine"}, {"pre": 48, "post": 94, "W": -0.41, "gain": 1.05, "signal": "substanceP"}, {"pre": 48, "post": 76, "W": 0.112, "gain": 1.05, "signal": "substanceP"}, {"pre": 48, "post": 34, "W": -0.262, "gain": 1.05, "signal": "substanceP"}, {"pre": 49, "post": 41, "W": -0.255, "gain": 0.85, "signal": "serotonin"}, {"pre": 49, "post": 23, "W": 0.322, "gain": 1.0, "signal": "electric"}, {"pre": 49, "post": 63, "W": 0.089, "gain": 0.85, "signal": "serotonin"}, {"pre": 49, "post": 27, "W": 0.717, "gain": 1.0, "signal": "electric"}, {"pre": 49, "post": 45, "W": -0.414, "gain": 1.15, "signal": "dopamine"}, {"pre": 50, "post": 63, "W": 0.233, "gain": 1.05, "signal": "substanceP"}, {"pre": 50, "post": 72, "W": -0.083, "gain": 1.05, "signal": "substanceP"}, {"pre": 50, "post": 98, "W": -0.651, "gain": 1.15, "signal": "dopamine"}, {"pre": 50, "post": 30, "W": -0.153, "gain": 1.0, "signal": "endorphin"}, {"pre": 50, "post": 89, "W": -0.31, "gain": 1.0, "signal": "endorphin"}, {"pre": 51, "post": 47, "W": -0.271, "gain": 1.0, "signal": "electric"}, {"pre": 51, "post": 61, "W": -0.367, "gain": 1.05, "signal": "substanceP"}, {"pre": 51, "post": 71, "W": -0.431, "gain": 0.85, "signal": "serotonin"}, {"pre": 51, "post": 68, "W": -0.295, "gain": 1.0, "signal": "endorphin"}, {"pre": 51, "post": 44, "W": 0.721, "gain": 1.0, "signal": "electric"}, {"pre": 51, "post": 55, "W": -0.494, "gain": 1.0, "signal": "endorphin"}, {"pre": 52, "post": 35, "W": -0.347, "gain": 1.0, "signal": "electric"}, {"pre": 52, "post": 93, "W": 0.532, "gain": 1.15, "signal": "dopamine"}, {"pre": 52, "post": 76, "W": -0.436, "gain": 0.85, "signal": "serotonin"}, {"pre": 52, "post": 98, "W": -0.316, "gain": 1.0, "signal": "endorphin"}, {"pre": 52, "post": 68, "W": -0.597, "gain": 1.0, "signal": "electric"}, {"pre": 53, "post": 6, "W": 0.316, "gain": 0.85, "signal": "serotonin"}, {"pre": 53, "post": 71, "W": 0.221, "gain": 1.0, "signal": "endorphin"}, {"pre": 54, "post": 13, "W": -0.034, "gain": 1.0, "signal": "electric"}, {"pre": 54, "post": 1, "W": -0.505, "gain": 0.85, "signal": "serotonin"}, {"pre": 54, "post": 74, "W": -0.396, "gain": 1.15, "signal": "dopamine"}, {"pre": 54, "post": 36, "W": -0.617, "gain": 1.05, "signal": "substanceP"}, {"pre": 54, "post": 61, "W": -0.159, "gain": 1.15, "signal": "dopamine"}, {"pre": 55, "post": 74, "W": -0.557, "gain": 1.15, "signal": "dopamine"}, {"pre": 55, "post": 81, "W": 0.719, "gain": 1.0, "signal": "electric"}, {"pre": 56, "post": 31, "W": 0.423, "gain": 1.0, "signal": "electric"}, {"pre": 56, "post": 15, "W": 0.17, "gain": 1.0, "signal": "electric"}, {"pre": 57, "post": 28, "W": 0.784, "gain": 1.0, "signal": "electric"}, {"pre": 57, "post": 67, "W": 0.11, "gain": 0.85, "signal": "serotonin"}, {"pre": 57, "post": 48, "W": 0.175, "gain": 1.15, "signal": "dopamine"}, {"pre": 57, "post": 58, "W": 0.716, "gain": 1.15, "signal": "dopamine"}, {"pre": 57, "post": 56, "W": 0.201, "gain": 1.0, "signal": "endorphin"}, {"pre": 57, "post": 38, "W": 0.257, "gain": 0.85, "signal": "serotonin"}, {"pre": 58, "post": 30, "W": -0.55, "gain": 1.15, "signal": "dopamine"}, {"pre": 58, "post": 22, "W": -0.079, "gain": 1.05, "signal": "substanceP"}, {"pre": 58, "post": 71, "W": -0.048, "gain": 1.0, "signal": "electric"}, {"pre": 59, "post": 29, "W": 0.325, "gain": 0.85, "signal": "serotonin"}, {"pre": 59, "post": 36, "W": -0.686, "gain": 1.05, "signal": "substanceP"}, {"pre": 60, "post": 33, "W": -0.12, "gain": 1.0, "signal": "endorphin"}, {"pre": 60, "post": 81, "W": -0.44, "gain": 1.0, "signal": "electric"}, {"pre": 60, "post": 76, "W": 0.653, "gain": 1.0, "signal": "endorphin"}, {"pre": 61, "post": 9, "W": 0.152, "gain": 0.85, "signal": "serotonin"}, {"pre": 61, "post": 7, "W": 0.674, "gain": 1.0, "signal": "electric"}, {"pre": 61, "post": 21, "W": -0.601, "gain": 1.05, "signal": "substanceP"}, {"pre": 62, "post": 90, "W": -0.01, "gain": 1.0, "signal": "electric"}, {"pre": 62, "post": 51, "W": 0.157, "gain": 1.15, "signal": "dopamine"}, {"pre": 62, "post": 34, "W": 0.375, "gain": 1.05, "signal": "substanceP"}, {"pre": 62, "post": 65, "W": -0.399, "gain": 1.0, "signal": "electric"}, {"pre": 63, "post": 29, "W": 0.139, "gain": 1.0, "signal": "electric"}, {"pre": 63, "post": 87, "W": 0.799, "gain": 1.15, "signal": "dopamine"}, {"pre": 64, "post": 74, "W": -0.047, "gain": 1.0, "signal": "endorphin"}, {"pre": 64, "post": 5, "W": 0.666, "gain": 1.05, "signal": "substanceP"}, {"pre": 64, "post": 98, "W": 0.795, "gain": 1.0, "signal": "endorphin"}, {"pre": 64, "post": 97, "W": 0.216, "gain": 1.05, "signal": "substanceP"}, {"pre": 65, "post": 11, "W": -0.286, "gain": 1.0, "signal": "electric"}, {"pre": 65, "post": 60, "W": 0.572, "gain": 1.15, "signal": "dopamine"}, {"pre": 65, "post": 44, "W": -0.141, "gain": 0.85, "signal": "serotonin"}, {"pre": 65, "post": 52, "W": -0.339, "gain": 1.05, "signal": "substanceP"}, {"pre": 65, "post": 42, "W": 0.502, "gain": 1.05, "signal": "substanceP"}, {"pre": 66, "post": 4, "W": 0.752, "gain": 1.15, "signal": "dopamine"}, {"pre": 66, "post": 58, "W": 0.584, "gain": 1.05, "signal": "substanceP"}, {"pre": 66, "post": 11, "W": 0.52, "gain": 1.0, "signal": "electric"}, {"pre": 66, "post": 40, "W": 0.252, "gain": 1.15, "signal": "dopamine"}, {"pre": 66, "post": 32, "W": -0.061, "gain": 1.0, "signal": "electric"}, {"pre": 66, "post": 41, "W": -0.5, "gain": 1.15, "signal": "dopamine"}, {"pre": 67, "post": 80, "W": 0.416, "gain": 1.05, "signal": "substanceP"}, {"pre": 67, "post": 97, "W": -0.373, "gain": 1.0, "signal": "endorphin"}, {"pre": 67, "post": 63, "W": 0.684, "gain": 1.0, "signal": "endorphin"}, {"pre": 67, "post": 81, "W": 0.609, "gain": 1.05, "signal": "substanceP"}, {"pre": 68, "post": 15, "W": 0.336, "gain": 1.0, "signal": "electric"}, {"pre": 68, "post": 3, "W": 0.081, "gain": 0.85, "signal": "serotonin"}, {"pre": 68, "post": 81, "W": -0.147, "gain": 1.0, "signal": "electric"}, {"pre": 68, "post": 78, "W": 0.788, "gain": 1.0, "signal": "endorphin"}, {"pre": 68, "post": 30, "W": -0.062, "gain": 1.15, "signal": "dopamine"}, {"pre": 69, "post": 83, "W": 0.692, "gain": 1.05, "signal": "substanceP"}, {"pre": 69, "post": 19, "W": -0.333, "gain": 1.0, "signal": "electric"}, {"pre": 70, "post": 53, "W": 0.082, "gain": 1.05, "signal": "substanceP"}, {"pre": 70, "post": 61, "W": -0.495, "gain": 1.05, "signal": "substanceP"}, {"pre": 70, "post": 60, "W": 0.013, "gain": 1.0, "signal": "electric"}, {"pre": 70, "post": 31, "W": 0.582, "gain": 1.0, "signal": "endorphin"}, {"pre": 71, "post": 99, "W": 0.513, "gain": 0.85, "signal": "serotonin"}, {"pre": 71, "post": 53, "W": 0.362, "gain": 0.85, "signal": "serotonin"}, {"pre": 71, "post": 43, "W": 0.128, "gain": 1.0, "signal": "electric"}, {"pre": 71, "post": 64, "W": 0.584, "gain": 1.05, "signal": "substanceP"}, {"pre": 72, "post": 68, "W": -0.196, "gain": 1.0, "signal": "electric"}, {"pre": 72, "post": 61, "W": 0.591, "gain": 0.85, "signal": "serotonin"}, {"pre": 72, "post": 44, "W": 0.115, "gain": 1.0, "signal": "endorphin"}, {"pre": 72, "post": 42, "W": 0.57, "gain": 1.0, "signal": "endorphin"}, {"pre": 72, "post": 70, "W": -0.73, "gain": 1.05, "signal": "substanceP"}, {"pre": 73, "post": 91, "W": -0.007, "gain": 1.0, "signal": "endorphin"}, {"pre": 73, "post": 48, "W": -0.598, "gain": 1.15, "signal": "dopamine"}, {"pre": 73, "post": 49, "W": -0.269, "gain": 1.0, "signal": "electric"}, {"pre": 73, "post": 85, "W": 0.599, "gain": 1.15, "signal": "dopamine"}, {"pre": 73, "post": 84, "W": -0.64, "gain": 1.05, "signal": "substanceP"}, {"pre": 74, "post": 1, "W": -0.68, "gain": 1.0, "signal": "endorphin"}, {"pre": 74, "post": 93, "W": -0.258, "gain": 0.85, "signal": "serotonin"}, {"pre": 74, "post": 18, "W": 0.308, "gain": 1.0, "signal": "electric"}, {"pre": 74, "post": 52, "W": 0.563, "gain": 1.15, "signal": "dopamine"}, {"pre": 74, "post": 84, "W": -0.192, "gain": 1.0, "signal": "electric"}, {"pre": 75, "post": 81, "W": -0.743, "gain": 1.0, "signal": "electric"}, {"pre": 75, "post": 92, "W": -0.424, "gain": 1.15, "signal": "dopamine"}, {"pre": 75, "post": 98, "W": 0.796, "gain": 0.85, "signal": "serotonin"}, {"pre": 75, "post": 62, "W": -0.106, "gain": 1.15, "signal": "dopamine"}, {"pre": 76, "post": 98, "W": -0.09, "gain": 1.15, "signal": "dopamine"}, {"pre": 76, "post": 82, "W": 0.645, "gain": 0.85, "signal": "serotonin"}, {"pre": 77, "post": 41, "W": -0.226, "gain": 0.85, "signal": "serotonin"}, {"pre": 77, "post": 7, "W": -0.567, "gain": 1.05, "signal": "substanceP"}, {"pre": 78, "post": 52, "W": 0.175, "gain": 1.15, "signal": "dopamine"}, {"pre": 78, "post": 72, "W": 0.192, "gain": 1.05, "signal": "substanceP"}, {"pre": 78, "post": 88, "W": -0.004, "gain": 1.0, "signal": "endorphin"}, {"pre": 78, "post": 23, "W": -0.571, "gain": 1.0, "signal": "electric"}, {"pre": 78, "post": 21, "W": 0.221, "gain": 1.05, "signal": "substanceP"}, {"pre": 78, "post": 22, "W": -0.391, "gain": 1.05, "signal": "substanceP"}, {"pre": 79, "post": 59, "W": -0.547, "gain": 1.0, "signal": "electric"}, {"pre": 79, "post": 36, "W": 0.712, "gain": 1.05, "signal": "substanceP"}, {"pre": 80, "post": 38, "W": -0.481, "gain": 0.85, "signal": "serotonin"}, {"pre": 80, "post": 82, "W": 0.565, "gain": 1.05, "signal": "substanceP"}, {"pre": 80, "post": 54, "W": -0.42, "gain": 1.15, "signal": "dopamine"}, {"pre": 80, "post": 89, "W": -0.226, "gain": 1.0, "signal": "electric"}, {"pre": 80, "post": 32, "W": 0.788, "gain": 0.85, "signal": "serotonin"}, {"pre": 80, "post": 58, "W": -0.765, "gain": 0.85, "signal": "serotonin"}, {"pre": 81, "post": 35, "W": 0.657, "gain": 1.15, "signal": "dopamine"}, {"pre": 81, "post": 1, "W": 0.533, "gain": 1.05, "signal": "substanceP"}, {"pre": 81, "post": 72, "W": 0.441, "gain": 0.85, "signal": "serotonin"}, {"pre": 81, "post": 88, "W": 0.171, "gain": 1.0, "signal": "endorphin"}, {"pre": 81, "post": 96, "W": -0.45, "gain": 0.85, "signal": "serotonin"}, {"pre": 82, "post": 79, "W": 0.205, "gain": 1.0, "signal": "endorphin"}, {"pre": 82, "post": 32, "W": -0.306, "gain": 1.15, "signal": "dopamine"}, {"pre": 82, "post": 87, "W": -0.747, "gain": 1.05, "signal": "substanceP"}, {"pre": 83, "post": 94, "W": 0.396, "gain": 0.85, "signal": "serotonin"}, {"pre": 83, "post": 16, "W": -0.519, "gain": 1.0, "signal": "electric"}, {"pre": 83, "post": 11, "W": -0.589, "gain": 1.0, "signal": "electric"}, {"pre": 83, "post": 37, "W": 0.602, "gain": 1.0, "signal": "electric"}, {"pre": 84, "post": 67, "W": 0.662, "gain": 0.85, "signal": "serotonin"}, {"pre": 84, "post": 64, "W": 0.748, "gain": 1.05, "signal": "substanceP"}, {"pre": 84, "post": 34, "W": 0.394, "gain": 0.85, "signal": "serotonin"}, {"pre": 84, "post": 21, "W": 0.487, "gain": 0.85, "signal": "serotonin"}, {"pre": 85, "post": 9, "W": 0.748, "gain": 1.05, "signal": "substanceP"}, {"pre": 85, "post": 18, "W": 0.487, "gain": 1.0, "signal": "electric"}, {"pre": 85, "post": 97, "W": -0.656, "gain": 0.85, "signal": "serotonin"}, {"pre": 85, "post": 28, "W": -0.778, "gain": 1.05, "signal": "substanceP"}, {"pre": 85, "post": 87, "W": -0.602, "gain": 1.0, "signal": "electric"}, {"pre": 86, "post": 87, "W": 0.516, "gain": 1.05, "signal": "substanceP"}, {"pre": 86, "post": 96, "W": -0.627, "gain": 0.85, "signal": "serotonin"}, {"pre": 86, "post": 33, "W": -0.046, "gain": 1.0, "signal": "endorphin"}, {"pre": 86, "post": 74, "W": 0.615, "gain": 1.0, "signal": "electric"}, {"pre": 87, "post": 41, "W": 0.655, "gain": 1.05, "signal": "substanceP"}, {"pre": 87, "post": 78, "W": 0.239, "gain": 0.85, "signal": "serotonin"}, {"pre": 87, "post": 28, "W": -0.576, "gain": 1.15, "signal": "dopamine"}, {"pre": 87, "post": 82, "W": -0.313, "gain": 1.15, "signal": "dopamine"}, {"pre": 87, "post": 8, "W": -0.614, "gain": 1.05, "signal": "substanceP"}, {"pre": 87, "post": 81, "W": 0.62, "gain": 1.0, "signal": "endorphin"}, {"pre": 88, "post": 49, "W": -0.129, "gain": 1.0, "signal": "electric"}, {"pre": 88, "post": 58, "W": 0.617, "gain": 1.0, "signal": "endorphin"}, {"pre": 88, "post": 47, "W": 0.534, "gain": 1.15, "signal": "dopamine"}, {"pre": 89, "post": 52, "W": -0.088, "gain": 1.05, "signal": "substanceP"}, {"pre": 89, "post": 35, "W": 0.569, "gain": 1.0, "signal": "endorphin"}, {"pre": 89, "post": 4, "W": 0.769, "gain": 1.15, "signal": "dopamine"}, {"pre": 89, "post": 88, "W": 0.071, "gain": 0.85, "signal": "serotonin"}, {"pre": 89, "post": 47, "W": -0.703, "gain": 0.85, "signal": "serotonin"}, {"pre": 89, "post": 27, "W": -0.496, "gain": 0.85, "signal": "serotonin"}, {"pre": 90, "post": 58, "W": 0.227, "gain": 1.0, "signal": "endorphin"}, {"pre": 90, "post": 11, "W": 0.155, "gain": 1.0, "signal": "electric"}, {"pre": 91, "post": 6, "W": 0.782, "gain": 1.0, "signal": "endorphin"}, {"pre": 91, "post": 42, "W": -0.472, "gain": 1.0, "signal": "electric"}, {"pre": 92, "post": 26, "W": -0.795, "gain": 1.0, "signal": "electric"}, {"pre": 92, "post": 75, "W": 0.78, "gain": 1.0, "signal": "endorphin"}, {"pre": 92, "post": 27, "W": -0.399, "gain": 1.0, "signal": "electric"}, {"pre": 92, "post": 29, "W": -0.624, "gain": 1.0, "signal": "endorphin"}, {"pre": 92, "post": 42, "W": -0.589, "gain": 1.15, "signal": "dopamine"}, {"pre": 92, "post": 18, "W": -0.227, "gain": 1.0, "signal": "electric"}, {"pre": 93, "post": 75, "W": -0.375, "gain": 1.0, "signal": "endorphin"}, {"pre": 93, "post": 41, "W": 0.387, "gain": 1.0, "signal": "endorphin"}, {"pre": 93, "post": 2, "W": -0.618, "gain": 1.0, "signal": "electric"}, {"pre": 94, "post": 60, "W": 0.021, "gain": 0.85, "signal": "serotonin"}, {"pre": 94, "post": 57, "W": -0.077, "gain": 1.15, "signal": "dopamine"}, {"pre": 95, "post": 78, "W": -0.317, "gain": 1.0, "signal": "electric"}, {"pre": 95, "post": 5, "W": -0.703, "gain": 1.15, "signal": "dopamine"}, {"pre": 95, "post": 93, "W": 0.556, "gain": 1.05, "signal": "substanceP"}, {"pre": 96, "post": 87, "W": 0.639, "gain": 1.15, "signal": "dopamine"}, {"pre": 96, "post": 13, "W": -0.285, "gain": 1.0, "signal": "electric"}, {"pre": 96, "post": 62, "W": -0.695, "gain": 1.0, "signal": "endorphin"}, {"pre": 96, "post": 91, "W": 0.199, "gain": 0.85, "signal": "serotonin"}, {"pre": 96, "post": 56, "W": 0.077, "gain": 1.0, "signal": "electric"}, {"pre": 97, "post": 48, "W": 0.009, "gain": 1.05, "signal": "substanceP"}, {"pre": 97, "post": 76, "W": -0.641, "gain": 1.05, "signal": "substanceP"}, {"pre": 97, "post": 67, "W": 0.564, "gain": 1.15, "signal": "dopamine"}, {"pre": 97, "post": 37, "W": 0.353, "gain": 1.0, "signal": "electric"}, {"pre": 98, "post": 55, "W": -0.258, "gain": 1.05, "signal": "substanceP"}, {"pre": 98, "post": 57, "W": -0.162, "gain": 1.05, "signal": "substanceP"}, {"pre": 98, "post": 29, "W": -0.3, "gain": 1.15, "signal": "dopamine"}, {"pre": 99, "post": 85, "W": -0.693, "gain": 1.05, "signal": "substanceP"}, {"pre": 99, "post": 32, "W": -0.651, "gain": 1.15, "signal": "dopamine"}, {"pre": 99, "post": 47, "W": 0.391, "gain": 1.15, "signal": "dopamine"}, {"pre": 99, "post": 19, "W": -0.204, "gain": 1.0, "signal": "electric"}, {"pre": 100, "post": 10, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 11, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 12, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 13, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 14, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 15, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 16, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 17, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 18, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 19, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 36, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 91, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 27, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 95, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 100, "post": 62, "W": 0.8, "gain": 1.05, "signal": "substanceP"}, {"pre": 35, "post": 10, "W": 0.749, "gain": 1.0, "signal": "electric"}, {"pre": 72, "post": 10, "W": 0.776, "gain": 1.0, "signal": "electric"}, {"pre": 65, "post": 10, "W": 0.569, "gain": 1.0, "signal": "electric"}, {"pre": 26, "post": 11, "W": 0.525, "gain": 1.0, "signal": "electric"}, {"pre": 56, "post": 11, "W": 0.441, "gain": 1.0, "signal": "electric"}, {"pre": 96, "post": 11, "W": 0.603, "gain": 1.0, "signal": "electric"}, {"pre": 39, "post": 12, "W": 0.739, "gain": 1.0, "signal": "electric"}, {"pre": 81, "post": 12, "W": 0.54, "gain": 1.0, "signal": "electric"}, {"pre": 48, "post": 12, "W": 0.623, "gain": 1.0, "signal": "electric"}, {"pre": 34, "post": 13, "W": 0.49, "gain": 1.0, "signal": "electric"}, {"pre": 55, "post": 13, "W": 0.572, "gain": 1.0, "signal": "electric"}, {"pre": 93, "post": 13, "W": 0.624, "gain": 1.0, "signal": "electric"}, {"pre": 99, "post": 14, "W": 0.411, "gain": 1.0, "signal": "electric"}, {"pre": 98, "post": 14, "W": 0.772, "gain": 1.0, "signal": "electric"}, {"pre": 91, "post": 14, "W": 0.732, "gain": 1.0, "signal": "electric"}, {"pre": 54, "post": 15, "W": 0.509, "gain": 1.0, "signal": "electric"}, {"pre": 23, "post": 15, "W": 0.705, "gain": 1.0, "signal": "electric"}, {"pre": 43, "post": 15, "W": 0.769, "gain": 1.0, "signal": "electric"}, {"pre": 64, "post": 16, "W": 0.748, "gain": 1.0, "signal": "electric"}, {"pre": 20, "post": 16, "W": 0.627, "gain": 1.0, "signal": "electric"}, {"pre": 43, "post": 16, "W": 0.56, "gain": 1.0, "signal": "electric"}, {"pre": 38, "post": 17, "W": 0.698, "gain": 1.0, "signal": "electric"}, {"pre": 23, "post": 17, "W": 0.486, "gain": 1.0, "signal": "electric"}, {"pre": 31, "post": 17, "W": 0.568, "gain": 1.0, "signal": "electric"}, {"pre": 63, "post": 18, "W": 0.525, "gain": 1.0, "signal": "electric"}, {"pre": 40, "post": 18, "W": 0.53, "gain": 1.0, "signal": "electric"}, {"pre": 67, "post": 18, "W": 0.777, "gain": 1.0, "signal": "electric"}, {"pre": 96, "post": 19, "W": 0.462, "gain": 1.0, "signal": "electric"}, {"pre": 30, "post": 19, "W": 0.702, "gain": 1.0, "signal": "electric"}, {"pre": 26, "post": 19, "W": 0.42, "gain": 1.0, "signal": "electric"}], "nodeColors": {"visual": "#2ecc71", "auditory": "#3498db", "motor": "#e74c3c", "normal": "#8892a0", "pain": "#f1c40f"}, "nodeNames": {"visual": "视觉", "auditory": "听觉", "motor": "运动", "normal": "普通", "pain": "疼痛源"}, "signalTypes": [{"key": "dopamine", "name": "多巴胺", "gain": 1.15, "color": "#f39c12"}, {"key": "endorphin", "name": "内啡肽", "gain": 1.0, "color": "#9b59b6"}, {"key": "serotonin", "name": "血清素", "gain": 0.85, "color": "#1abc9c"}, {"key": "substanceP", "name": "P物质", "gain": 1.05, "color": "#f1c40f"}, {"key": "electric", "name": "电信号", "gain": 1.0, "color": "#7f8c8d"}], "injectPeriod": 8, "lr": 0.003, "pruneW": 0.05, "inactiveMax": 150, "negMax": 80, "pathEvery": 20, "pathMin": 15, "maxSteps": 3000, "convWindow": 40, "convEps": 0.02, "painId": 100, "pInhibit": 1.0};
+const N = DATA.neurons.length;
+const INJECT = DATA.injectPeriod, LR = DATA.lr, PRUNE_W = DATA.pruneW,
+      INACTIVE_MAX = DATA.inactiveMax, NEG_MAX = DATA.negMax,
+      PATH_EVERY = DATA.pathEvery, PATH_MIN = DATA.pathMin,
+      MAX_STEPS = DATA.maxSteps, CONV_WIN = DATA.convWindow, CONV_EPS = DATA.convEps;
+
+// ---- 状态 ----
+const neurons = DATA.neurons.map(n => ({...n, y:0, prev_y:0, last_active:0, neg_streak:0, alive:true, external:null}));
+const synapses = DATA.synapses.map(s => ({...s, freq:0, alive:true}));
+const inSyn = {};
+synapses.forEach(s => { (inSyn[s.post] = inSyn[s.post] || []).push(s); });
+const synSet = new Set(synapses.map(s => s.pre + "_" + s.post));
+const pathCount = {};
+const stats = {delSyn:0, delNeu:0, newSyn:0};
+let PAIN_ON = false;
+const P_INHIBIT = DATA.pInhibit;
+let t = 0, converged = false, running = false, timer = null, speed = 1;
+const SPEEDS = [1, 4, 16, 64];
+let trend = [];
+const fpHist = [];
+
+function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+// ---- 布局（疼痛源放圆心，其余 100 个在圆周）----
+const CX = 400, CY = 400, R = 340;
+const POS = neurons.map((n, i) => {
+  if (n.type === "pain") return {x: CX, y: CY};
+  const a = (i / (N - 1)) * Math.PI * 2 - Math.PI / 2;
+  return {x: CX + R * Math.cos(a), y: CY + R * Math.sin(a)};
+});
+
+// ---- 建 SVG ----
+const NS = "http://www.w3.org/2000/svg";
+const gEdges = document.getElementById("edges");
+const gNodes = document.getElementById("nodes");
+const edgeEls = synapses.map(s => {
+  const p1 = POS[s.pre], p2 = POS[s.post];
+  const mx = (p1.x + p2.x)/2, my = (p1.y + p2.y)/2;
+  const dx = mx - CX, dy = my - CY;
+  const dl = Math.sqrt(dx*dx + dy*dy) || 1;
+  const k = 22 + Math.abs(s.W) * 30;
+  const cxp = mx + dx/dl*k, cyp = my + dy/dl*k;
+  const path = document.createElementNS(NS, "path");
+  path.setAttribute("d", `M${p1.x.toFixed(1)} ${p1.y.toFixed(1)} Q${cxp.toFixed(1)} ${cyp.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`);
+  const info = DATA.signalTypes.find(x => x.key === s.signal);
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", info.color);
+  path.setAttribute("stroke-width", (0.4 + Math.abs(s.W) * 1.5).toFixed(2));
+  path.setAttribute("opacity", 0.14);
+  gEdges.appendChild(path);
+  return path;
+});
+const nodeEls = neurons.map(n => {
+  const p = POS[n.id];
+  const g = document.createElementNS(NS, "g");
+  const halo = document.createElementNS(NS, "circle");
+  halo.setAttribute("cx", p.x); halo.setAttribute("cy", p.y);
+  halo.setAttribute("r", 6); halo.setAttribute("fill", "url(#halo)"); halo.setAttribute("opacity", 0);
+  const c = document.createElementNS(NS, "circle");
+  c.setAttribute("cx", p.x); c.setAttribute("cy", p.y);
+  c.setAttribute("r", n.type === "normal" ? 5 : (n.type === "pain" ? 10 : 7));
+  c.setAttribute("fill", DATA.nodeColors[n.type]);
+  c.setAttribute("stroke", "#0d1117"); c.setAttribute("stroke-width", 1.5);
+  g.appendChild(halo); g.appendChild(c);
+  gNodes.appendChild(g);
+  return {g, halo, c, n};
+});
+
+// ---- 图例 ----
+const legendEl = document.getElementById("legend");
+Object.entries(DATA.nodeNames).forEach(([key, name]) => {
+  const item = document.createElement("span");
+  item.className = "item";
+  item.innerHTML = `<span class="dot" style="background:${DATA.nodeColors[key]}"></span>${name}`;
+  legendEl.appendChild(item);
+});
+DATA.signalTypes.forEach(si => {
+  const item = document.createElement("span");
+  item.className = "item";
+  item.innerHTML = `<span class="swatch" style="background:${si.color}"></span>${si.name}`;
+  legendEl.appendChild(item);
+});
+
+// ---- 仿真核心（与 Python 一致）----
+function stepOnce(){
+  if (converged && !PAIN_ON) return;
+  // 1. 感官注入
+  if (t % INJECT === 0){
+    neurons.forEach(n => { if (n.alive && (n.type === "visual" || n.type === "auditory")) n.external = 1.0; });
+  }
+  // 2. 同步传播（含 P 物质疼痛机制：P 物质特异抑制本神经元内的电信号）
+  neurons.forEach(n => n.prev_y = n.y);
+  const newY = new Array(N).fill(0);
+  neurons.forEach(n => {
+    if (!n.alive){ newY[n.id] = 0; return; }
+    if (n.type === "pain"){ newY[n.id] = PAIN_ON ? 1.0 : 0.0; return; }
+    if (n.external !== null){ newY[n.id] = 1.0; return; }
+    let elec = 0, oth = 0, p = 0;
+    (inSyn[n.id] || []).forEach(s => {
+      if (!s.alive || !neurons[s.pre].alive) return;
+      const preY = neurons[s.pre].prev_y;
+      if (s.signal === "electric") elec += preY * s.W;
+      else if (s.signal === "substanceP") p += preY;
+      else oth += preY * s.W * s.gain;
+    });
+    const k = Math.min(1, Math.max(0, p)) * P_INHIBIT;
+    const raw = clamp(oth + elec * (1 - k) - n.B, -1, 1);
+    newY[n.id] = n.type === "motor" ? (raw + 1) / 2 : raw;
+  });
+  neurons.forEach(n => { if (n.alive){ n.y = newY[n.id]; n.external = null; } });
+
+  // 3. 可塑性
+  synapses.forEach(s => {
+    if (!s.alive) return;
+    const pre = neurons[s.pre];
+    if (!pre.alive) return;
+    if (Math.abs(pre.y) > 0.01){
+      const boost = Math.min(1, s.freq / 50);
+      s.W = clamp(s.W + LR * pre.y * (1 + boost), -1, 1);
+      s.freq++;
+    }
+  });
+
+  // 4. 长程连接累积
+  synapses.forEach(s => {
+    if (!s.alive) return;
+    const a = neurons[s.pre], b = neurons[s.post];
+    if (!a.alive || !b.alive) return;
+    if (a.y > 0.05 && b.y > 0.05 && a.prev_y > 0.05){
+      (inSyn[a.id] || []).forEach(s2 => {
+        if (!s2.alive) return;
+        const c = neurons[s2.pre];
+        if (c.alive && c.prev_y > 0.05 && c.id !== b.id){
+          const key = c.id + "_" + b.id;
+          pathCount[key] = (pathCount[key] || 0) + 1;
+        }
+      });
+    }
+  });
+
+  // 5. 周期检查：新建长程突触
+  if (t % PATH_EVERY === PATH_EVERY - 1){
+    Object.keys(pathCount).forEach(key => {
+      if (pathCount[key] >= PATH_MIN && !synSet.has(key)){
+        const [cid, bid] = key.split("_").map(Number);
+        // 运动神经元只接收电信号命令（与 Python 一致）
+        const isMotor = neurons[bid].type === "motor";
+        const info = isMotor
+          ? DATA.signalTypes.find(x => x.key === "electric")
+          : DATA.signalTypes[Math.floor(Math.random() * DATA.signalTypes.length)];
+        const ns = {pre: cid, post: bid, W: 0.12, gain: info.gain, signal: info.key, freq: 0, alive: true};
+        synapses.push(ns);
+        (inSyn[bid] = inSyn[bid] || []).push(ns);
+        synSet.add(key);
+        stats.newSyn++;
+        // 追加边元素
+        const p1 = POS[cid], p2 = POS[bid];
+        const mx = (p1.x + p2.x)/2, my = (p1.y + p2.y)/2;
+        const dx = mx - CX, dy = my - CY;
+        const dl = Math.sqrt(dx*dx + dy*dy) || 1;
+        const cxp = mx + dx/dl*24, cyp = my + dy/dl*24;
+        const path = document.createElementNS(NS, "path");
+        path.setAttribute("d", `M${p1.x.toFixed(1)} ${p1.y.toFixed(1)} Q${cxp.toFixed(1)} ${cyp.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`);
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke", info.color);
+        path.setAttribute("stroke-width", "0.8");
+        path.setAttribute("opacity", "0.5");
+        gEdges.appendChild(path);
+        edgeEls.push(path);
+      }
+      pathCount[key] = 0;
+    });
+  }
+
+  // 6. 修剪突触
+  synapses.forEach(s => {
+    if (s.alive && Math.abs(s.W) < PRUNE_W){ s.alive = false; stats.delSyn++; }
+  });
+
+  // 7. 修剪神经元
+  neurons.forEach(n => {
+    if (!n.alive || n.type === "visual" || n.type === "auditory" || n.type === "pain") return;
+    if (n.y < -0.05) n.neg_streak++;
+    if (Math.abs(n.y) > 0.05){ n.last_active = t; n.neg_streak = 0; }
+    if (t - n.last_active > INACTIVE_MAX || n.neg_streak > NEG_MAX){
+      n.alive = false;
+      stats.delNeu++;
+      synapses.forEach(s => {
+        if (s.alive && (s.pre === n.id || s.post === n.id)){ s.alive = false; stats.delSyn++; }
+      });
+    }
+  });
+
+  t++;
+
+  // 8. 收敛检测
+  const alive = neurons.filter(n => n.alive);
+  const syns = synapses.filter(s => s.alive);
+  const avgAbsY = alive.length ? alive.reduce((a, n) => a + Math.abs(n.y), 0) / alive.length : 0;
+  const avgW = syns.length ? syns.reduce((a, s) => a + Math.abs(s.W), 0) / syns.length : 0;
+  const fp = [avgAbsY, avgW, alive.length, syns.length];
+  fpHist.push(fp);
+  if (t % 20 === 19 && fpHist.length >= CONV_WIN){
+    const recent = fpHist.slice(-CONV_WIN);
+    let stable = true;
+    for (let c = 0; c < 4; c++){
+      const col = recent.map(r => r[c]);
+      const mean = col.reduce((a, x) => a + x, 0) / col.length;
+      if (mean === 0) continue;
+      const varv = col.reduce((a, x) => a + (x - mean) ** 2, 0) / col.length;
+      if (Math.sqrt(varv) / mean > CONV_EPS){ stable = false; break; }
+    }
+    if (stable) converged = true;
+  }
+  if (t >= MAX_STEPS) converged = true;
+
+  // 趋势点
+  if (t % 10 === 0 || converged){
+    trend.push({t, syn: synapses.filter(s => s.alive).length, neu: neurons.filter(n => n.alive).length});
+    if (trend.length > 400) trend = trend.slice(-400);
+  }
+}
+
+// ---- 渲染 ----
+function render(){
+  // 节点
+  nodeEls.forEach(({halo, c, n}) => {
+    if (!n.alive){ c.setAttribute("opacity", 0.06); halo.setAttribute("opacity", 0); return; }
+    c.setAttribute("opacity", 1);
+    const y = n.y, act = Math.abs(y);
+    let fill = DATA.nodeColors[n.type];
+    if (y > 0.05) fill = "#ffffff";
+    else if (y < -0.05) fill = "#a78bfa";
+    c.setAttribute("fill", fill);
+    const baseR = n.type === "normal" ? 5 : (n.type === "pain" ? 10 : 7);
+    c.setAttribute("r", (baseR + act * 4).toFixed(1));
+    halo.setAttribute("opacity", Math.min(0.85, act * 1.6).toFixed(2));
+    halo.setAttribute("r", (6 + act * 14).toFixed(1));
+    c.setAttribute("stroke", y > 0.05 ? "#ffffff" : "#0d1117");
+  });
+  // 边
+  edgeEls.forEach((path, i) => {
+    const s = synapses[i];
+    if (!s || !s.alive){ path.setAttribute("opacity", 0.03); return; }
+    const pre = neurons[s.pre];
+    const on = pre.alive && Math.abs(pre.y) > 0.05;
+    const info = DATA.signalTypes.find(x => x.key === s.signal);
+    path.setAttribute("opacity", on ? Math.min(0.9, 0.3 + Math.abs(s.W)) : 0.14);
+    path.setAttribute("stroke-width", (0.4 + Math.abs(s.W) * 1.5).toFixed(2));
+    path.setAttribute("stroke-dasharray", on ? "6 5" : "none");
+  });
+  // 面板
+  const alive = neurons.filter(n => n.alive);
+  const syns = synapses.filter(s => s.alive);
+  const actCnt = alive.filter(n => Math.abs(n.y) > 0.05).length;
+  const avgW = syns.length ? syns.reduce((a, s) => a + Math.abs(s.W), 0) / syns.length : 0;
+  document.getElementById("stT").textContent = t;
+  document.getElementById("stNeu").textContent = alive.length + " / " + N;
+  document.getElementById("stSyn").textContent = syns.length;
+  document.getElementById("stW").textContent = avgW.toFixed(3);
+  document.getElementById("stDelS").textContent = stats.delSyn;
+  document.getElementById("stDelN").textContent = stats.delNeu;
+  document.getElementById("stNew").textContent = stats.newSyn;
+  document.getElementById("stAct").textContent = actCnt;
+  const pill = document.getElementById("statePill");
+  if (converged){
+    pill.className = "pill done"; pill.textContent = "已收敛";
+    document.getElementById("stateTxt").textContent = "传播已变得有规律，共 " + t + " 步（可点「施加疼痛」看动作被压制）";
+    if (timer){ clearInterval(timer); timer = null; running = false; document.getElementById("btnPlay").textContent = "播放"; }
+  } else {
+    pill.className = "pill run"; pill.textContent = "运行中";
+    document.getElementById("stateTxt").textContent = "正在学习与修剪";
+  }
+  // 运动输出
+  const ml = document.getElementById("motorList");
+  ml.innerHTML = "";
+  neurons.filter(n => n.type === "motor" && n.alive)
+    .sort((a, b) => b.y - a.y)
+    .forEach(n => {
+      const row = document.createElement("div");
+      row.className = "motor-row";
+      row.innerHTML = `<span class="nm">运动#${n.id}</span>
+        <div class="motor-bar"><div class="motor-fill" style="width:${(n.y * 100).toFixed(0)}%"></div></div>
+        <span class="motor-val">${n.y.toFixed(3)}</span>`;
+      ml.appendChild(row);
+    });
+  // 趋势图
+  if (trend.length >= 2){
+    const W = 300, H = 110;
+    const maxT = Math.max(t, 1);
+    const maxVal = Math.max(420, ...trend.map(p => p.syn));
+    const ptsSyn = trend.map(p => `${(p.t / maxT * W).toFixed(1)},${(95 - p.syn / maxVal * 85).toFixed(1)}`).join(" ");
+    const ptsNeu = trend.map(p => `${(p.t / maxT * W).toFixed(1)},${(95 - p.neu / maxVal * 85).toFixed(1)}`).join(" ");
+    document.getElementById("trendSyn").setAttribute("points", ptsSyn);
+    document.getElementById("trendNeu").setAttribute("points", ptsNeu);
+  }
+}
+
+// ---- 控制 ----
+const btnPlay = document.getElementById("btnPlay");
+const btnStep = document.getElementById("btnStep");
+const btnJump = document.getElementById("btnJump");
+const btnReset = document.getElementById("btnReset");
+const btnSpeed = document.getElementById("btnSpeed");
+const btnPain = document.getElementById("btnPain");
+const spdVal = document.getElementById("spdVal");
+
+function togglePlay(){
+  if (running){ clearInterval(timer); timer = null; running = false; btnPlay.textContent = "播放"; }
+  else {
+    running = true; btnPlay.textContent = "暂停";
+    const tick = () => {
+      if (converged && !PAIN_ON){ togglePlay(); render(); return; }
+      for (let i = 0; i < speed; i++) stepOnce();
+      render();
+      timer = setTimeout(tick, 90);
+    };
+    timer = setTimeout(tick, 90);
+  }
+}
+btnPlay.addEventListener("click", togglePlay);
+btnStep.addEventListener("click", () => { if (!converged || PAIN_ON){ for (let i = 0; i < speed; i++) stepOnce(); render(); } });
+btnJump.addEventListener("click", () => {
+  if (timer){ clearInterval(timer); timer = null; running = false; btnPlay.textContent = "播放"; }
+  while (!converged) stepOnce();
+  render();
+});
+btnReset.addEventListener("click", () => {
+  if (timer){ clearInterval(timer); timer = null; running = false; btnPlay.textContent = "播放"; }
+  PAIN_ON = false;
+  btnPain.classList.remove("active");
+  btnPain.textContent = "施加疼痛";
+  neurons.forEach(n => { n.y = 0; n.prev_y = 0; n.last_active = 0; n.neg_streak = 0; n.alive = true; n.external = null; });
+  synapses.forEach(s => { s.freq = 0; s.alive = true; });
+  synapses.length = DATA.synapses.length;
+  DATA.synapses.forEach((s, i) => { synapses[i].pre = s.pre; synapses[i].post = s.post; synapses[i].W = s.W; synapses[i].gain = s.gain; synapses[i].signal = s.signal; });
+  while (gEdges.firstChild) gEdges.removeChild(gEdges.firstChild);
+  edgeEls.length = 0;
+  DATA.synapses.forEach(s => {
+    const p1 = POS[s.pre], p2 = POS[s.post];
+    const mx = (p1.x + p2.x)/2, my = (p1.y + p2.y)/2;
+    const dx = mx - CX, dy = my - CY;
+    const dl = Math.sqrt(dx*dx + dy*dy) || 1;
+    const cxp = mx + dx/dl*24, cyp = my + dy/dl*24;
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("d", `M${p1.x.toFixed(1)} ${p1.y.toFixed(1)} Q${cxp.toFixed(1)} ${cyp.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`);
+    const info = DATA.signalTypes.find(x => x.key === s.signal);
+    path.setAttribute("fill", "none"); path.setAttribute("stroke", info.color);
+    path.setAttribute("stroke-width", (0.4 + Math.abs(s.W) * 1.5).toFixed(2));
+    path.setAttribute("opacity", 0.14);
+    gEdges.appendChild(path);
+    edgeEls.push(path);
+  });
+  t = 0; converged = false; stats.delSyn = 0; stats.delNeu = 0; stats.newSyn = 0;
+  trend = []; fpHist.length = 0;
+  Object.keys(pathCount).forEach(k => delete pathCount[k]);
+  // 重建索引（去掉运行期新建的长程突触）
+  Object.keys(inSyn).forEach(k => delete inSyn[k]);
+  synapses.forEach(s => { (inSyn[s.post] = inSyn[s.post] || []).push(s); });
+  synSet.clear();
+  synapses.forEach(s => synSet.add(s.pre + "_" + s.post));
+  render();
+});
+btnPain.addEventListener("click", () => {
+  PAIN_ON = !PAIN_ON;
+  btnPain.classList.toggle("active", PAIN_ON);
+  btnPain.textContent = PAIN_ON ? "停止疼痛" : "施加疼痛";
+  render();
+});
+btnSpeed.addEventListener("click", () => {
+  const idx = SPEEDS.indexOf(speed);
+  speed = SPEEDS[(idx + 1) % SPEEDS.length];
+  spdVal.textContent = speed + "×";
+  btnSpeed.textContent = speed >= 16 ? "减速" : "加速";
+});
+
+render();
+</script>
+</body>
+</html>
