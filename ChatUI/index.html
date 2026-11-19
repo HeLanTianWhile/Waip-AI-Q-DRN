@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Q-DRN · ChatUI（AI 视角）</title>
+<style>
+  :root{
+    --bg:#0b0f16;
+    --panel:#111823;
+    --panel-2:#0e141d;
+    --line:#1f2b3d;
+    --text:#dbe4f0;
+    --muted:#7c8aa0;
+    --accent:#c98a5b;
+    --accent-dim:#8a5a34;
+    --user:#1b2635;
+    --ai:#2a2118;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+    cursor:none;
+    overflow:hidden;
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+    -webkit-user-select:none;
+    user-select:none;
+  }
+
+  /* ── 状态条：AI 能读到的元信息 ── */
+  .status{
+    height:34px;flex:0 0 auto;
+    display:flex;align-items:center;gap:22px;
+    padding:0 18px;
+    border-bottom:1px solid var(--line);
+    background:var(--panel-2);
+    font-size:12.5px;color:var(--muted);
+    letter-spacing:.3px;
+  }
+  .status .tag{
+    padding:2px 9px;border:1px solid var(--line);border-radius:999px;
+    color:var(--text);
+  }
+  .status .tag.ime{border-color:var(--accent-dim);color:var(--accent)}
+  .status .mono{font-family:Consolas,"Courier New",monospace;color:#a9b8cc}
+  .status .grow{flex:1}
+
+  /* ── 聊天区 ── */
+  .log{
+    flex:1 1 auto;overflow-y:auto;
+    padding:26px 30px 14px;
+    display:flex;flex-direction:column;gap:14px;
+  }
+  .msg{
+    max-width:min(620px,72%);
+    padding:11px 15px;
+    border-radius:10px;
+    line-height:1.75;
+    font-size:15px;
+    border:1px solid var(--line);
+  }
+  .msg.user{align-self:flex-start;background:var(--user)}
+  .msg.ai{align-self:flex-end;background:var(--ai);border-color:#3a2c1d}
+  .msg .who{
+    display:block;font-size:11.5px;letter-spacing:1px;
+    color:var(--muted);margin-bottom:5px;
+  }
+  .msg.ai .who{color:var(--accent)}
+  .log::-webkit-scrollbar{width:8px}
+  .log::-webkit-scrollbar-thumb{background:#1c2736;border-radius:4px}
+
+  /* ── 输入法候选栏 ── */
+  .candbar{
+    flex:0 0 auto;
+    display:flex;align-items:center;gap:8px;
+    padding:8px 20px;
+    border-top:1px solid var(--line);
+    background:var(--panel);
+    min-height:44px;
+  }
+  .candbar .lbl{font-size:11.5px;color:var(--muted);letter-spacing:1px;margin-right:4px}
+  .cand{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:4px 11px;border:1px solid var(--line);border-radius:6px;
+    background:var(--panel-2);font-size:16px;color:var(--text);
+    cursor:none;transition:.12s;
+  }
+  .cand:hover{border-color:var(--accent-dim);background:#1a222f}
+  .cand .num{font-size:10.5px;color:var(--muted);font-family:Consolas,monospace}
+  .cand.on{border-color:var(--accent);color:var(--accent)}
+
+  /* ── 输入框（含已键入按键） ── */
+  .composer{
+    flex:0 0 auto;
+    display:flex;align-items:center;gap:12px;
+    padding:12px 20px;
+    border-top:1px solid var(--line);
+    background:var(--panel-2);
+  }
+  .field{
+    flex:1;min-height:38px;
+    display:flex;align-items:center;flex-wrap:wrap;
+    gap:2px;
+    padding:6px 12px;
+    border:1px solid var(--line);border-radius:8px;
+    background:#0d131c;
+    font-size:15px;
+    line-height:1.6;
+  }
+  .field .done{color:var(--text)}
+  .field .comp{
+    color:var(--accent);
+    border-bottom:1.5px solid var(--accent);
+    padding-bottom:1px;
+    font-family:Consolas,monospace;
+    letter-spacing:1px;
+  }
+  .caret{
+    width:1.5px;height:18px;background:var(--accent);
+    animation:blink 1.1s steps(1) infinite;
+  }
+  @keyframes blink{50%{opacity:0}}
+  .field .ph{color:#42506a;font-size:13px}
+  .sendbtn{
+    padding:8px 18px;border:1px solid var(--accent-dim);border-radius:8px;
+    color:var(--accent);background:#1a140e;font-size:13.5px;
+  }
+
+  /* ── 屏幕软键盘 ── */
+  .kb{
+    flex:0 0 auto;
+    padding:10px 20px 16px;
+    border-top:1px solid var(--line);
+    background:var(--panel);
+    display:flex;flex-direction:column;gap:6px;
+    align-items:center;
+  }
+  .kbrow{display:flex;gap:6px}
+  .key{
+    min-width:38px;height:36px;padding:0 8px;
+    display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--line);border-radius:6px;
+    background:#0f1621;color:#9fb0c6;
+    font-size:12.5px;font-family:Consolas,monospace;
+    transition:.08s;
+  }
+  .key:hover{border-color:var(--accent-dim);color:var(--text)}
+  .key.active{background:#2a2118;border-color:var(--accent);color:var(--accent)}
+  .key.wide{min-width:64px;font-family:inherit;font-size:12.5px}
+  .key.xwide{min-width:120px;font-family:inherit;font-size:12.5px}
+  .key.fn{color:#c98a5b;border-color:#3a2c1d}
+
+  /* ── AI 的光标（它看得见的那个） ── */
+  #cursor{
+    position:fixed;left:0;top:0;width:22px;height:22px;
+    pointer-events:none;z-index:99;
+    transform:translate(-1px,-1px);
+  }
+  #cursor svg{width:22px;height:22px;display:block}
+  #clickring{
+    position:fixed;width:44px;height:44px;margin:-22px 0 0 -22px;
+    border:1.5px solid var(--accent);border-radius:50%;
+    pointer-events:none;opacity:0;z-index:98;
+  }
+  #clickring.go{animation:ring .55s ease-out}
+  @keyframes ring{
+    0%{opacity:.9;transform:scale(.5)}
+    100%{opacity:0;transform:scale(1.2)}
+  }
+</style>
+</head>
+<body>
+
+<div class="status">
+  <span class="tag ime" id="imeTag">输入法 · 中文（拼音）</span>
+  <span>光标 <span class="mono" id="curXY">0, 0</span></span>
+  <span>视口 <span class="mono" id="viewSize">—</span></span>
+  <span>上次点击 <span class="mono" id="lastClick">无</span></span>
+  <span class="grow"></span>
+  <span class="mono">Q-DRN · ChatUI</span>
+</div>
+
+<div class="log" id="log">
+  <div class="msg user"><span class="who">用户</span>帮我把今天的评审会纪要整理成一封邮件，发给项目组。</div>
+  <div class="msg ai"><span class="who">AI</span>好的。请把纪要贴进来，或者告诉我文件区的标题，我先按“结论 / 待办 / 风险”三段来拆。</div>
+  <div class="msg user"><span class="who">用户</span>已经放到文件区了，标题写的是《11月19日 评审会》。</div>
+  <div class="msg ai"><span class="who">AI</span>收到。我先读标题定位文件，再整理。收件人默认是项目组全员，语气按周报走，可以吗？</div>
+  <div class="msg user"><span class="who">用户</span>可以。</div>
+</div>
+
+<div class="candbar">
+  <span class="lbl">候选</span>
+  <div id="cands"></div>
+</div>
+
+<div class="composer">
+  <div class="field" id="field">
+    <span class="ph" id="ph">点击屏幕键盘输入…</span>
+    <span class="done" id="done"></span>
+    <span class="comp" id="comp"></span>
+    <span class="caret"></span>
+  </div>
+  <button class="sendbtn" id="send">发送</button>
+</div>
+
+<div class="kb" id="kb"></div>
+
+<div id="cursor">
+  <svg viewBox="0 0 24 24" fill="none">
+    <path d="M4 2 L4 20 L9.2 15.2 L12.4 22 L15.2 20.6 L12 14 L19 13.6 Z"
+          fill="#dbe4f0" stroke="#0b0f16" stroke-width="1.4"/>
+    <circle cx="11" cy="9" r="5.2" stroke="#c98a5b" stroke-width="1.1" opacity=".85"/>
+  </svg>
+</div>
+<div id="clickring"></div>
+
+<script>
+/* ───────── 键盘布局 ───────── */
+const ROWS = [
+  ["中/英","q","w","e","r","t","y","u","i","o","p","⌫"],
+  ["a","s","d","f","g","h","j","k","l","Enter"],
+  ["z","x","c","v","b","n","m",",",".","空格"],
+];
+const kb = document.getElementById("kb");
+ROWS.forEach((row, ri) => {
+  const div = document.createElement("div");
+  div.className = "kbrow";
+  row.forEach(k => {
+    const el = document.createElement("div");
+    el.className = "key";
+    el.textContent = k;
+    el.dataset.k = k;
+    if (k === "空格") el.classList.add("xwide");
+    else if (k.length > 1 && k !== "中/英") el.classList.add("wide");
+    if (k === "中/英" || k === "⌫" || k === "Enter" || k === "空格")
+      el.classList.add("fn");
+    el.addEventListener("mousedown", e => { e.preventDefault(); pressKey(k); });
+    div.appendChild(el);
+  });
+  kb.appendChild(div);
+});
+
+/* ───────── 输入法状态 ───────── */
+let mode = "zh";          // zh | en
+let buffer = "";          // 已键入的按键（拼音串）
+let committed = "";       // 已上屏的文字
+let candList = [];
+
+const DICT = {
+  ni:   ["你","呢","泥","拟","倪"],
+  hao:  ["好","号","浩","豪","耗"],
+  wo:   ["我","窝","握","卧","沃"],
+  zai:  ["在","再","载","仔","宰"],
+  shi:  ["是","时","事","十","史"],
+  de:   ["的","得","地","德","底"],
+  ma:   ["吗","妈","码","马","骂"],
+  hui:  ["会","回","汇","辉","绘"],
+  yi:   ["一","以","已","意","依"],
+  email:["邮件","电邮"],
+};
+
+const imeTag = document.getElementById("imeTag");
+const comp = document.getElementById("comp");
+const done = document.getElementById("done");
+const ph   = document.getElementById("ph");
+const cands = document.getElementById("cands");
+
+function renderCands(){
+  cands.innerHTML = "";
+  candList.forEach((c, i) => {
+    const el = document.createElement("div");
+    el.className = "cand" + (i === 0 ? " on" : "");
+    el.innerHTML = `<span class="num">${i+1}</span><span>${c}</span>`;
+    el.addEventListener("mousedown", e => { e.preventDefault(); commit(c); });
+    cands.appendChild(el);
+  });
+  if (!candList.length){
+    const el = document.createElement("span");
+    el.style.cssText = "font-size:12px;color:#42506a";
+    el.textContent = mode === "zh" ? "（等待键入按键）" : "（英文模式：按键直接上屏）";
+    cands.appendChild(el);
+  }
+}
+
+function renderField(){
+  done.textContent = committed;
+  comp.textContent = buffer;
+  ph.style.display = (committed || buffer) ? "none" : "inline";
+}
+
+function refreshCands(){
+  if (mode === "en" || !buffer){ candList = []; renderCands(); return; }
+  candList = DICT[buffer] || [buffer.toUpperCase()];
+  renderCands();
+}
+
+function flash(el){
+  el.classList.add("active");
+  setTimeout(() => el.classList.remove("active"), 180);
+}
+
+function pressKey(k){
+  const el = [...document.querySelectorAll(".key")].find(e => e.dataset.k === k);
+  if (el) flash(el);
+
+  if (k === "中/英"){
+    mode = mode === "zh" ? "en" : "zh";
+    buffer = ""; candList = [];
+    imeTag.textContent = mode === "zh" ? "输入法 · 中文（拼音）" : "输入法 · 英文";
+    renderCands(); renderField();
+    return;
+  }
+  if (k === "⌫"){
+    buffer = buffer.slice(0, -1);
+    refreshCands(); renderField();
+    return;
+  }
+  if (k === "空格"){
+    if (mode === "zh"){
+      if (candList.length) commit(candList[0]);
+      else { committed += " "; }
+    } else { committed += " "; }
+    renderField(); return;
+  }
+  if (k === "Enter"){ send(); return; }
+  if (mode === "en"){ committed += k; renderField(); return; }
+
+  buffer += k;
+  refreshCands(); renderField();
+}
+
+function commit(ch){
+  committed += ch;
+  buffer = ""; candList = [];
+  renderCands(); renderField();
+}
+
+function send(){
+  const text = (committed + buffer).trim();
+  if (!text){ return; }
+  const div = document.createElement("div");
+  div.className = "msg ai";
+  div.innerHTML = `<span class="who">AI</span>${text}`;
+  document.getElementById("log").appendChild(div);
+  document.getElementById("log").scrollTop = 1e9;
+  committed = ""; buffer = ""; candList = [];
+  renderCands(); renderField();
+}
+
+document.getElementById("send").addEventListener("mousedown", e => { e.preventDefault(); send(); });
+
+/* ───────── 光标：AI 看得见的自己 ───────── */
+const cur = document.getElementById("cursor");
+const ring = document.getElementById("clickring");
+const curXY = document.getElementById("curXY");
+const viewSize = document.getElementById("viewSize");
+const lastClick = document.getElementById("lastClick");
+
+function place(x, y){
+  cur.style.left = x + "px";
+  cur.style.top  = y + "px";
+  curXY.textContent = Math.round(x) + ", " + Math.round(y);
+}
+document.addEventListener("mousemove", e => place(e.clientX, e.clientY));
+document.addEventListener("mousedown", e => {
+  place(e.clientX, e.clientY);
+  lastClick.textContent = Math.round(e.clientX) + ", " + Math.round(e.clientY);
+  ring.style.left = e.clientX + "px";
+  ring.style.top  = e.clientY + "px";
+  ring.classList.remove("go");
+  void ring.offsetWidth;
+  ring.classList.add("go");
+});
+
+function size(){
+  viewSize.textContent = window.innerWidth + "×" + window.innerHeight;
+}
+window.addEventListener("resize", size);
+
+/* 初始 ── */
+size(); place(640, 400);
+renderCands(); renderField();
+</script>
+</body>
+</html>
