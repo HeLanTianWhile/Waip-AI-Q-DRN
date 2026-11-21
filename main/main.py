@@ -1,4 +1,4 @@
-# 版本号0.4.3.0
+# 版本号1.5.3.0
 from argparse import Action
 import tabnanny
 
@@ -33,12 +33,7 @@ def main(NeuralConfigDatabase, SynapsesDatabase, NeuralStateDatabase, Input):
 
     pending_changes = {}
     for i in task_dispatch_list:
-        new_y = "NOT Activate"
-        if task_dispatch_list[i] >= NeuralConfigDatabase[i]["bias"]:
-            new_y = task_dispatch_list[i]
-        elif task_dispatch_list[i] < NeuralConfigDatabase[i]["bias"]:
-            new_y = "NOT Activate"
-        pending_changes[i] = new_y
+        pending_changes[i] = task_dispatch_list[i] - NeuralConfigDatabase[i]["bias"]
 
     for i in pending_tasks:
         if i not in pending_changes:

@@ -1,7 +1,7 @@
 import random
 
 
-def data_into(input=100, output=3, memory=100, Normal=500):
+def data_into(input=74884, output=4, memory=500, Normal=2000):
     NeuralConfigDatabase = {}
     SynapsesDatabase = {}
     NeuralStateDatabase = {}

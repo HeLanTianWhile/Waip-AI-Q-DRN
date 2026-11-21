@@ -1,15 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-Waip AI Q-DRN 训练场终端
-========================
+Waip AI Q-DRN · ChatUI 工作区终端
+================================
 流程：
-  1. 启动 → 选择或新建意识体
-  2. 加载该意识体的三个数据库（Neural Configuration / Synapses / Neural State）
-  3. 加载 main/main.py，然后打开深色训练场窗口
-  4. 每轮前向传播结束后立刻应用三个输出神经元（X、Y、转向），
-     再用 heading ± 50°（共 100°）的光线追踪生成下一轮输入
-  5. 关闭窗口时把三个数据库写回该意识体的数据库文件
-  6. 选择阶段输入 && create 可新建意识体（100 个输入神经元 + 3 个输出神经元）
+  1. 启动 → 选择或新建意识体，并加载三个数据库；
+  2. 打开固定 390×844 的 Python ChatUI 窗口；
+  3. 每轮读取 390×192 视野灰度像素，加上视野和光标的归一化位置，写入 74,884 个输入；
+  4. 输出 0/1 控制光标 X/Y，输出 2 控制视野 Y，输出 3 大于 0 时点击一次；
+  5. 关闭窗口时保存数据库；&& create 新建 74,884 输入 / 4 输出的最终配置意识体。
 
 运行：python data/Terminal.py
 """
@@ -141,17 +139,22 @@ def save_databases(agent_name, config_db, state_db, synapses_db):
 
 
 def create_agent():
-    """新建意识体：输入名称 → 用 data_into 生成 100 输入 / 3 输出的三个数据库"""
+    """新建最终配置意识体：74,884 输入、4 输出、500 记忆、2,000 正常神经元。"""
     print(f"\n[新建] 输入 && create 进入意识体创建流程")
     name = ask_agent_name()
     if name is None:
         print("已取消创建。")
         return None
 
-    print(f"[新建] 正在初始化意识体「{name}」的数据库（输入 100 / 输出 3：X、Y、转向）…")
+    print(
+        f"[新建] 正在初始化意识体「{name}」的数据库"
+        "（74,884 输入 / 4 输出 / 500 记忆 / 2,000 正常）…"
+    )
     try:
         data_into = load_data_into_func()
-        config_db, synapses_db, state_db = data_into(input=100, output=3)
+        config_db, synapses_db, state_db = data_into(
+            input=74884, output=4, memory=500, Normal=2000
+        )
     except Exception as e:
         print(f"[错误] 数据库初始化失败：{type(e).__name__}: {e}")
         return None
@@ -205,8 +208,8 @@ def choose_agent():
 
 def main():
     print("=" * 56)
-    print("Waip AI Q-DRN 训练场")
-    print("版本：0.4.3.0")
+    print("Waip AI Q-DRN · ChatUI 工作区")
+    print("版本：1.5.3.0")
     print("开发者：科文通")
     print("=" * 56)
 
@@ -226,20 +229,24 @@ def main():
         return 1
 
     try:
-        from TrainField import run_trainer
+        from ChatWorkspace import run_workspace
     except Exception as e:
-        print(f"[错误] 训练场加载失败：{type(e).__name__}: {e}")
+        print(f"[错误] ChatUI 工作区加载失败：{type(e).__name__}: {e}")
         return 1
 
-    print("[完成] 正在打开训练场窗口，关闭窗口即退出并保存。\n")
-    run_trainer(
-        agent_name,
-        config_db,
-        synapses_db,
-        state_db,
-        main_func,
-        lambda config, state, syn: save_databases(agent_name, config, state, syn),
-    )
+    print("[完成] 正在打开固定 390×844 的 ChatUI 窗口，关闭窗口即退出并保存。\n")
+    try:
+        run_workspace(
+            agent_name,
+            config_db,
+            synapses_db,
+            state_db,
+            main_func,
+            lambda config, state, syn: save_databases(agent_name, config, state, syn),
+        )
+    except Exception as e:
+        print(f"[错误] 工作区运行失败：{type(e).__name__}: {e}")
+        return 1
     print(f"[完成] 意识体「{agent_name}」的数据库已保存。")
     return 0
 
