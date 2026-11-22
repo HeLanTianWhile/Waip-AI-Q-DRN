@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import traceback
+from math import tanh
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
@@ -181,7 +182,7 @@ class NeuralWorker(threading.Thread):
                 dispatch[target] = dispatch.get(target, 0.0) + weight * value
 
         changes = {
-            target: value - self.config_db[target]["bias"]
+            target: tanh(value - self.config_db[target]["bias"])
             for target, value in dispatch.items()
         }
         for source in active:

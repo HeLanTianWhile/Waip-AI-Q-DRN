@@ -1,6 +1,5 @@
 # 版本号1.5.3.0
-from argparse import Action
-import tabnanny
+from math import tanh
 
 
 def main(NeuralConfigDatabase, SynapsesDatabase, NeuralStateDatabase, Input):
@@ -33,7 +32,7 @@ def main(NeuralConfigDatabase, SynapsesDatabase, NeuralStateDatabase, Input):
 
     pending_changes = {}
     for i in task_dispatch_list:
-        pending_changes[i] = task_dispatch_list[i] - NeuralConfigDatabase[i]["bias"]
+        pending_changes[i] = tanh(task_dispatch_list[i] - NeuralConfigDatabase[i]["bias"])
 
     for i in pending_tasks:
         if i not in pending_changes:
