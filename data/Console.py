@@ -605,7 +605,6 @@ class ConsoleWindow(QMainWindow):
         pop = meta.get("population", [])
         results = meta.get("results", {})
         live = getattr(self.trainer, "live_results", None) or {}
-        live_gen = getattr(self.trainer, "live_gen", None)
         loaded = len(self.trainer.population)
 
         if not pop:
@@ -619,22 +618,22 @@ class ConsoleWindow(QMainWindow):
         else:
             n = len(pop)
 
-        # 内容没变化就不重建（避免每 2s 闪动、丢失滚动位置）
+        # 只在行数变化时重建；其余情况原地改文本，避免每 2s 卡一下界面
         sig = (n, len(live), meta.get("generation"))
         if sig == self._table_sig:
             return
         self._table_sig = sig
         sb = self.net_table.verticalScrollBar()
         scroll_pos = sb.value()
+        rebuilt = n != self.net_table.rowCount()
+        if rebuilt:
+            self.net_table.setRowCount(n)
 
-        self.net_table.setRowCount(n)
         for row in range(n):
             m = pop[row] if row < len(pop) else {
                 "name": f"net_{row:03d}", "role": None, "parent": None,
                 "score": None, "replay_gen": None, "replay_idx": None,
             }
-            name = m["name"]
-            role = {"survivor": "存活", "child": "子代"}.get(m.get("role"), "网络")
             lr = live.get(row)
             if lr is not None:
                 score, res = lr["score"], lr
@@ -642,31 +641,61 @@ class ConsoleWindow(QMainWindow):
                 # 本代已有实时结果，但该网络还没轮到 → 先显示待评估
                 score, res = None, {}
             else:
-                score, res = m.get("score"), results.get(name, {})
-            score_txt = f"{score:+.4f}" if isinstance(score, (int, float)) else "—"
-            hit_txt = "是" if res.get("hit_w") else ("否" if res else "—")
-            clicks_txt = str(res.get("clicks", "—"))
-            parent_txt = f"net_{m['parent']:03d}" if m.get("parent") is not None else "—"
-            items = [name, role, score_txt, hit_txt, clicks_txt, parent_txt]
+                score, res = m.get("score"), results.get(m["name"], {})
+            items = [
+                m["name"],
+                {"survivor": "存活", "child": "子代"}.get(m.get("role"), "网络"),
+                f"{score:+.4f}" if isinstance(score, (int, float)) else "—",
+                "是" if res.get("hit_w") else ("否" if res else "—"),
+                str(res.get("clicks", "—")),
+                f"net_{m['parent']:03d}" if m.get("parent") is not None else "—",
+            ]
             for col, txt in enumerate(items):
-                self.net_table.setItem(row, col, QTableWidgetItem(txt))
-            rg = m.get("replay_gen"); ri = m.get("replay_idx")
-            if lr is not None and live_gen is not None:
-                rg, ri = live_gen, row
-            elif live and lr is None:
-                rg, ri = None, None
-            watch = QPushButton("观看")
+                item = self.net_table.item(row, col)
+                if item is None:
+                    self.net_table.setItem(row, col, QTableWidgetItem(txt))
+                elif item.text() != txt:
+                    item.setText(txt)
+
+            watch = self.net_table.cellWidget(row, 6)
+            if watch is None:
+                watch = QPushButton()
+                watch.clicked.connect(lambda _=False, r=row: self._watch_row(r))
+                self.net_table.setCellWidget(row, 6, watch)
+            rg, ri, _, _ = self._watch_state(row)
             if rg is None or ri is None:
-                watch.setEnabled(False)
-                watch.setText("未推演")
+                if watch.isEnabled() or watch.text() != "未推演":
+                    watch.setEnabled(False)
+                    watch.setText("未推演")
             else:
-                watch.clicked.connect(
-                    lambda _=False, rg=rg, ri=ri, name=name, score=score:
-                        self._open_replay(rg, ri, name, score, res.get("hit_w", False))
-                )
-            self.net_table.setCellWidget(row, 6, watch)
-        self.net_table.resizeRowsToContents()
+                if not watch.isEnabled() or watch.text() != "观看":
+                    watch.setEnabled(True)
+                    watch.setText("观看")
+
+        if rebuilt:
+            self.net_table.resizeRowsToContents()
         sb.setValue(scroll_pos)
+
+    def _watch_state(self, row):
+        """返回 (replay_gen, replay_idx, score, hit_w)；本代未推演则为 None。"""
+        meta = self.trainer.current_meta or self._pending_meta or {}
+        live = getattr(self.trainer, "live_results", None) or {}
+        lr = live.get(row)
+        if lr is not None:
+            return getattr(self.trainer, "live_gen", None), row, lr["score"], lr["hit_w"]
+        if live:
+            return None, None, None, None
+        pop = meta.get("population") or []
+        m = pop[row] if row < len(pop) else {}
+        res = (meta.get("results") or {}).get(m.get("name"), {}) or {}
+        return m.get("replay_gen"), m.get("replay_idx"), m.get("score"), res.get("hit_w")
+
+    def _watch_row(self, row):
+        rg, ri, score, hit = self._watch_state(row)
+        if rg is None or ri is None:
+            self.statusBar().showMessage("该网络本代还未推演，暂无回放。")
+            return
+        self._open_replay(rg, ri, f"net_{row:03d}", score, bool(hit))
 
     def _open_replay(self, gen, idx, name, score, hit_w):
         path = TRAIN_DIR / "replays" / f"gen_{gen}" / f"net_{idx:03d}.json"

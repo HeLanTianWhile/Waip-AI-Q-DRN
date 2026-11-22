@@ -50,9 +50,8 @@ TICKS_PER_RUN = 50
 MUTATION_RATES = [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.04, 0.08, 0.16]
 
 # 自适应变异：后代得分趋同（多样性低）时，大幅提高变异率
-CONVERGE_STD_MID = 0.05      # 标准差低于此值 → 轻度趋同，变异率 ×2
-CONVERGE_STD = 0.02          # 标准差低于此值 → 严重趋同，变异率 ×8
-MUTATION_BOOST_MAX = 8.0     # 严重趋同时的放大倍数
+CONVERGE_STD = 0.05          # 标准差低于此值 → 判定趋同，变异率 ×8
+MUTATION_BOOST_MAX = 10.0    # 完全趋同（σ=0）时的放大倍数
 MUTATION_RATE_CAP = 0.32     # 单个子代变异率上限（防止一次改动全部突触）
 
 
@@ -67,9 +66,9 @@ def adaptive_rates(scores):
     mean = sum(scores) / n
     std = (sum((s - mean) ** 2 for s in scores) / n) ** 0.5
     if std < CONVERGE_STD:
-        boost = MUTATION_BOOST_MAX
-    elif std < CONVERGE_STD_MID:
-        boost = 2.0
+        # 趋同率越高（σ 越接近 0），放大倍数越大；σ 接近 0.05 时仅略高于 1 倍
+        converge_ratio = 1.0 - std / CONVERGE_STD      # 0 ~ 1
+        boost = round(1.0 + (MUTATION_BOOST_MAX - 1.0) * converge_ratio, 2)
     else:
         boost = 1.0
     rates = [r * boost for r in MUTATION_RATES]
@@ -263,8 +262,27 @@ class Trainer(QObject):
         self._stop.clear()
         self._done = False
         write_lock(self.generation, self.target_gen, "running")
+        # 让主线程（界面/观看）更容易抢到 GIL
+        try:
+            sys.setswitchinterval(0.0005)
+        except Exception:
+            pass
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+        self._lower_thread_priority(self._thread)
+
+    @staticmethod
+    def _lower_thread_priority(thread):
+        """Windows：把训练线程降到 BELOW_NORMAL，避免它把界面线程饿死。"""
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenThread(0x0020 | 0x0040, False, thread.native_id)  # SET|QUERY
+            if h:
+                k32.SetThreadPriority(h, -1)   # THREAD_PRIORITY_BELOW_NORMAL
+                k32.CloseHandle(h)
+        except Exception:
+            pass
 
     def stop(self):
         self._stop.set()
@@ -408,7 +426,8 @@ class Trainer(QObject):
         mutation_boost, effective_rates, score_std = adaptive_rates(
             [r["score"] for r in results])
         if mutation_boost > 1.0:
-            self._log(f"[多样性] 得分趋同（标准差 {score_std:.4f}）"
+            ratio = 1.0 - score_std / CONVERGE_STD
+            self._log(f"[多样性] 得分趋同（σ={score_std:.4f}，趋同率 {ratio * 100:.0f}%）"
                       f"→ 变异率 ×{mutation_boost:g}："
                       f"{effective_rates[0]:.4g} ~ {effective_rates[-1]:.4g}")
         else:
