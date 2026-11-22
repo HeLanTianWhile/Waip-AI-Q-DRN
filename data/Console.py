@@ -162,6 +162,19 @@ class ConsoleWindow(QMainWindow):
         self._log_timer.setInterval(400)
         self._log_timer.timeout.connect(self._tail_log)
 
+        self._quit_when_done = False
+        self._refresh_tick = 0
+        self._table_sig = None
+        self._pending_meta = None
+
+        # 空转心跳：让主线程定期执行 Python 字节码，
+        # 否则 Qt 的 C++ 事件循环里 Ctrl+C(SIGINT) 永远得不到处理
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(100)
+        self._pulse_timer.timeout.connect(lambda: None)
+        self._pulse_timer.start()
+        self._install_sigint()
+
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
         self.stack.addWidget(self._build_mode_page())   # 0
@@ -343,6 +356,34 @@ class ConsoleWindow(QMainWindow):
             return n if ok else None
         return None
 
+    def _install_sigint(self):
+        """Ctrl+C / Ctrl+Break：结束训练并退出控制台。"""
+        import signal
+
+        def handler(_signum, _frame):
+            try:
+                if self.trainer is not None and self.trainer.is_running():
+                    if self._quit_when_done:      # 再按一次 → 立即退出
+                        QApplication.quit()
+                        return
+                    self._quit_when_done = True
+                    self.trainer.stop()
+                    self.statusBar().showMessage(
+                        "已收到 Ctrl+C，正在结束训练（本代不会写入数据库）…")
+                else:
+                    QApplication.quit()
+            except Exception:
+                pass
+
+        for name in ("SIGINT", "SIGBREAK"):
+            sig = getattr(signal, name, None)
+            if sig is None:
+                continue
+            try:
+                signal.signal(sig, handler)
+            except Exception:
+                pass
+
     def _check_lock_hint(self):
         lock = TrainerMod.read_lock()
         if lock and lock.get("state") == "running":
@@ -427,6 +468,20 @@ class ConsoleWindow(QMainWindow):
         self.statusBar().showMessage(
             "继续上次训练…" if resumed else "正在启动训练线程…")
         try:
+            sys.setswitchinterval(0.001)   # 训练线程重度占用 GIL 时，保证界面/信号仍能响应
+        except Exception:
+            pass
+        self._quit_when_done = False
+        self._table_sig = None
+        # 立即读取上一代元数据，让列表在加载存档期间就显示已有的 100 个网络
+        self._pending_meta = None
+        meta_path = TRAIN_DIR / "generation.json"
+        if meta_path.exists():
+            try:
+                self._pending_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                self._pending_meta = None
+        try:
             self.trainer = Trainer(screen, target_gen=target_gen)
             self.trainer.sig_progress.connect(self._on_progress)
             self.trainer.sig_generation_done.connect(self._on_generation_done)
@@ -444,9 +499,14 @@ class ConsoleWindow(QMainWindow):
         self.stop_btn.setEnabled(True)
         self.stop_btn.setText("⏹ 结束训练")
         if target_gen is not None:
-            self.statusBar().showMessage(f"训练进行中（目标第 {target_gen} 代）…")
+            self.statusBar().showMessage(
+                f"训练进行中（目标第 {target_gen} 代）· 可按 Ctrl+C 停止")
         else:
-            self.statusBar().showMessage("训练进行中（不设上限）…")
+            self.statusBar().showMessage("训练进行中（不设上限）· 可按 Ctrl+C 停止")
+
+        # 先把已有的 100 个网络填进表格，不必等全部加载完
+        self._table_sig = None
+        self._refresh_train_view()
 
     def _stop_train(self):
         if self.trainer and self.trainer.is_running():
@@ -459,6 +519,9 @@ class ConsoleWindow(QMainWindow):
         self.stop_btn.setEnabled(False)
         self.statusBar().showMessage("训练已结束。")
         self._refresh_train_view()
+        if self._quit_when_done:
+            self._quit_when_done = False
+            QApplication.quit()
 
     def _reload_log_file(self):
         path = TRAIN_DIR / "train.log"
@@ -477,6 +540,10 @@ class ConsoleWindow(QMainWindow):
 
     def _tail_log(self):
         """把 train.log 的新增内容追加到日志视图（兜底，保证实时可见）。"""
+        self._refresh_tick += 1
+        # 训练中每 ~2s 刷新一次网络表（显示加载进度 / 实时得分）
+        if self._refresh_tick % 5 == 0 and self.trainer and self.trainer.is_running():
+            self._refresh_train_view()
         path = TRAIN_DIR / "train.log"
         if not path.exists():
             return
@@ -516,7 +583,7 @@ class ConsoleWindow(QMainWindow):
     def _refresh_train_view(self):
         if not self.trainer:
             return
-        meta = self.trainer.current_meta or {}
+        meta = self.trainer.current_meta or self._pending_meta or {}
         gen = meta.get("generation", self.trainer.generation)
         if getattr(self.trainer, "target_gen", None) is not None:
             self.gen_label.setText(f"第 {gen} 代 / 目标 {self.trainer.target_gen}")
@@ -528,25 +595,67 @@ class ConsoleWindow(QMainWindow):
         if best is not None: parts.append(f"上一代最佳 {best:+.4f}")
         if mean is not None: parts.append(f"平均 {mean:+.4f}")
         if hit is not None: parts.append(f"命中W {hit}/100")
-        self.stats_label.setText("  |  ".join(parts))
+        boost = meta.get("mutation_boost")
+        if boost and boost > 1:
+            parts.append(f"趋同 σ={meta.get('score_std', 0):.4f} 变异率×{boost:g}")
+        if not (self.trainer.is_running()
+                and getattr(self.trainer, "live_results", None)):
+            self.stats_label.setText("  |  ".join(parts))
 
         pop = meta.get("population", [])
         results = meta.get("results", {})
-        self.net_table.setRowCount(len(pop))
-        for row, m in enumerate(pop):
+        live = getattr(self.trainer, "live_results", None) or {}
+        live_gen = getattr(self.trainer, "live_gen", None)
+        loaded = len(self.trainer.population)
+
+        if not pop:
+            # 没有任何一代元数据：按已加载数量显示
+            if self.trainer.is_running():
+                if gen > 0:
+                    self.stats_label.setText(f"第 {gen} 代 · 正在加载网络 {loaded}/100…")
+                else:
+                    self.stats_label.setText(f"首次初始化网络 {loaded}/100…")
+            n = loaded
+        else:
+            n = len(pop)
+
+        # 内容没变化就不重建（避免每 2s 闪动、丢失滚动位置）
+        sig = (n, len(live), meta.get("generation"))
+        if sig == self._table_sig:
+            return
+        self._table_sig = sig
+        sb = self.net_table.verticalScrollBar()
+        scroll_pos = sb.value()
+
+        self.net_table.setRowCount(n)
+        for row in range(n):
+            m = pop[row] if row < len(pop) else {
+                "name": f"net_{row:03d}", "role": None, "parent": None,
+                "score": None, "replay_gen": None, "replay_idx": None,
+            }
             name = m["name"]
-            role = "存活" if m["role"] == "survivor" else "子代"
-            score = m.get("score")
+            role = {"survivor": "存活", "child": "子代"}.get(m.get("role"), "网络")
+            lr = live.get(row)
+            if lr is not None:
+                score, res = lr["score"], lr
+            elif live:
+                # 本代已有实时结果，但该网络还没轮到 → 先显示待评估
+                score, res = None, {}
+            else:
+                score, res = m.get("score"), results.get(name, {})
             score_txt = f"{score:+.4f}" if isinstance(score, (int, float)) else "—"
-            res = results.get(name, {})
-            hit_txt = "是" if res.get("hit_w") else "否"
+            hit_txt = "是" if res.get("hit_w") else ("否" if res else "—")
             clicks_txt = str(res.get("clicks", "—"))
             parent_txt = f"net_{m['parent']:03d}" if m.get("parent") is not None else "—"
             items = [name, role, score_txt, hit_txt, clicks_txt, parent_txt]
             for col, txt in enumerate(items):
                 self.net_table.setItem(row, col, QTableWidgetItem(txt))
-            watch = QPushButton("观看")
             rg = m.get("replay_gen"); ri = m.get("replay_idx")
+            if lr is not None and live_gen is not None:
+                rg, ri = live_gen, row
+            elif live and lr is None:
+                rg, ri = None, None
+            watch = QPushButton("观看")
             if rg is None or ri is None:
                 watch.setEnabled(False)
                 watch.setText("未推演")
@@ -557,6 +666,7 @@ class ConsoleWindow(QMainWindow):
                 )
             self.net_table.setCellWidget(row, 6, watch)
         self.net_table.resizeRowsToContents()
+        sb.setValue(scroll_pos)
 
     def _open_replay(self, gen, idx, name, score, hit_w):
         path = TRAIN_DIR / "replays" / f"gen_{gen}" / f"net_{idx:03d}.json"

@@ -49,6 +49,38 @@ TICKS_PER_RUN = 50
 # 9 个子网络的变异率互不相同（围绕默认 0.001 几何展开，可按需调整）
 MUTATION_RATES = [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.04, 0.08, 0.16]
 
+# 自适应变异：后代得分趋同（多样性低）时，大幅提高变异率
+CONVERGE_STD_MID = 0.05      # 标准差低于此值 → 轻度趋同，变异率 ×2
+CONVERGE_STD = 0.02          # 标准差低于此值 → 严重趋同，变异率 ×8
+MUTATION_BOOST_MAX = 8.0     # 严重趋同时的放大倍数
+MUTATION_RATE_CAP = 0.32     # 单个子代变异率上限（防止一次改动全部突触）
+
+
+def adaptive_rates(scores):
+    """按后代得分分布返回 (boost, 实际变异率列表, 标准差)。
+
+    得分越集中（趋同），变异率放大越多，以跳出局部最优。
+    """
+    n = len(scores)
+    if n == 0:
+        return 1.0, list(MUTATION_RATES), 0.0
+    mean = sum(scores) / n
+    std = (sum((s - mean) ** 2 for s in scores) / n) ** 0.5
+    if std < CONVERGE_STD:
+        boost = MUTATION_BOOST_MAX
+    elif std < CONVERGE_STD_MID:
+        boost = 2.0
+    else:
+        boost = 1.0
+    rates = [r * boost for r in MUTATION_RATES]
+    if rates and rates[-1] > MUTATION_RATE_CAP:
+        # 超出上限时整体按几何比例压缩到上限，保持 9 个子代变异率互不相同
+        lo, hi = rates[0], MUTATION_RATE_CAP
+        ratio = (hi / lo) ** (1.0 / (len(rates) - 1))
+        rates = [lo * ratio ** i for i in range(len(rates))]
+    return boost, rates, std
+
+
 ROLE_CODE = {"Input": 0, "Output": 1, "Memory": 2, "Normal": 3}
 CODE_ROLE = {v: k for k, v in ROLE_CODE.items()}
 
@@ -194,6 +226,12 @@ def clear_lock():
 
 # ---------- 训练器 ----------
 
+
+class _Aborted(Exception):
+    """用户请求结束训练（任何阶段都可抛出，确保不保存半成品）。"""
+
+
+
 class Trainer(QObject):
     sig_log = Signal(str)               # 新日志行
     sig_generation_done = Signal(dict)  # 一代结束的元数据
@@ -210,6 +248,8 @@ class Trainer(QObject):
         self.population = []            # [(cfg, syn), ...]
         self.generation = 0
         self.current_meta = {}          # 最新一代元数据
+        self.live_gen = None            # 正在评估的代
+        self.live_results = {}          # {idx: {score, clicks, hit_w}} 实时结果
         self._score_fn = _load_main_module("drn_score", "score.py").score
         self._rank_fn = _load_main_module("drn_rank", "rank.py").rank
         self._mutation_fn = _load_main_module("drn_mutation", "mutation.py").mutation
@@ -263,6 +303,8 @@ class Trainer(QObject):
                     self._log("本次目标：持续训练（不设上限）。")
                 self.population = []
                 for i in range(POPULATION):
+                    if self._stop.is_set():
+                        raise _Aborted()
                     self.population.append(load_network(TRAIN_DIR / f"net_{i:03d}"))
                     if (i + 1) % 10 == 0 or i == 0:
                         self._log(f"  加载网络 {i + 1}/{POPULATION}")
@@ -270,6 +312,8 @@ class Trainer(QObject):
                 self._log(f"从存档继续：已加载第 {self.generation} 代，"
                           f"{len(self.population)} 个网络。")
                 return
+            except _Aborted:
+                raise
             except Exception as e:
                 self._log(f"[警告] 读取存档失败（{e}），重新初始化 100 个网络。")
         self._init_population()
@@ -300,6 +344,8 @@ class Trainer(QObject):
             write_lock(self.generation, self.target_gen, "running")
             while not self._stop.is_set() and not self._done:
                 self._run_generation()
+        except _Aborted:
+            self._log("[已结束] 已收到结束请求，立即停止（本代不会写入数据库）。")
         except Exception:
             import traceback
             self._log("[错误] 训练线程异常：")
@@ -321,6 +367,8 @@ class Trainer(QObject):
 
         # 1) 评估全部 100 个网络
         results = []
+        self.live_gen = gen
+        self.live_results = {}
         for i in range(POPULATION):
             if self._stop.is_set():
                 self._log(f"[已结束] 第 {gen + 1} 代评估被中断，本代不写入数据库。")
@@ -342,6 +390,9 @@ class Trainer(QObject):
                 "clicks": len(clicks), "hit_w": bool(hit_w),
                 "last_pos": traj["mouse_positions"][-1],
             })
+            self.live_results[i] = {
+                "score": float(s), "clicks": len(clicks), "hit_w": bool(hit_w),
+            }
             self.sig_progress.emit(i + 1, POPULATION, float(s))
             if (i + 1) % 10 == 0 or i == 0:
                 self._log(f"  评估 net_{i:03d}  score={s:+.4f}  "
@@ -353,10 +404,22 @@ class Trainer(QObject):
         survivors = ranked[:SURVIVORS]                             # 前 10
         survivor_indices = [int(name.split("_")[1]) for name in survivors]
 
+        # 2.5) 多样性检测：得分越趋同，变异率越高（避免陷入局部最优）
+        mutation_boost, effective_rates, score_std = adaptive_rates(
+            [r["score"] for r in results])
+        if mutation_boost > 1.0:
+            self._log(f"[多样性] 得分趋同（标准差 {score_std:.4f}）"
+                      f"→ 变异率 ×{mutation_boost:g}："
+                      f"{effective_rates[0]:.4g} ~ {effective_rates[-1]:.4g}")
+        else:
+            self._log(f"[多样性] 得分分布正常（标准差 {score_std:.4f}），变异率不变。")
+
         # 3) 构建下一代：10 存活 + 每存活 9 子代
         next_pop = []
         meta_list = []
         for si in survivor_indices:
+            if self._stop.is_set():
+                raise _Aborted()
             cfg, syn = self.population[si]
             next_pop.append((copy.deepcopy(cfg), copy.deepcopy(syn)))
             meta_list.append({
@@ -367,7 +430,9 @@ class Trainer(QObject):
             })
         for si in survivor_indices:
             cfg_p, syn_p = self.population[si]
-            for mr in MUTATION_RATES:
+            for mr in effective_rates:
+                if self._stop.is_set():
+                    raise _Aborted()
                 cfg_c, syn_c = self._mutation_fn(cfg_p, syn_p, mutation_rate=mr)
                 next_pop.append((cfg_c, syn_c))
                 meta_list.append({
@@ -397,7 +462,7 @@ class Trainer(QObject):
         self._log("---- 存活的前 10 个网络 ----")
         for name in survivors:
             self._log(f"  {name}  score={scores[name]:+.4f}  "
-                      f"→ 将产生 {CHILDREN_PER_SURVIVOR} 个子代，变异率 {MUTATION_RATES}")
+                      f"→ 将产生 {CHILDREN_PER_SURVIVOR} 个子代，变异率 {effective_rates}")
         self._log(f"[统计] 最佳={best:+.4f}  平均={mean:+.4f}  "
                   f"命中 W 键={hit_count}/{POPULATION}  耗时={time.time()-t_gen:.1f}s")
 
@@ -416,6 +481,8 @@ class Trainer(QObject):
             "population": meta_list,
             "ranked": ranked,
             "scores": scores,
+            "score_std": round(score_std, 6),
+            "mutation_boost": mutation_boost,
             "results": {f"net_{r['idx']:03d}": r for r in results},
         }
         self.current_meta = meta
