@@ -14,3 +14,6 @@ venv/
 # 系统文件
 Thumbs.db
 .DS_Store
+
+# 训练运行时生成的大文件（100 个网络存档 + 屏幕缓存 + 回放）
+data/TRAIN/

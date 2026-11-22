@@ -208,47 +208,17 @@ def choose_agent():
 
 def main():
     print("=" * 56)
-    print("Waip AI Q-DRN · ChatUI 工作区")
-    print("版本：1.5.3.0")
+    print("Waip AI Q-DRN · 控制台")
+    print("版本：2.6.3.0")
     print("开发者：科文通")
     print("=" * 56)
-
-    agent_name = choose_agent()
-    if agent_name is None:
-        print("未选择意识体，终端退出。")
-        return 0
-
-    print(f"\n[加载] 正在加载意识体「{agent_name}」的数据库…")
-    config_db, synapses_db, state_db = load_agent_databases(agent_name)
-
-    print(f"[加载] 正在加载主程序 {MAIN_FILE.relative_to(ROOT_DIR)} …")
+    print("启动后将弹出控制台：选择「训练」开始 GA 训练，或「运行模型」观看已有网络。\n")
     try:
-        main_func = load_main_func()
+        from Console import launch
     except Exception as e:
-        print(f"[错误] 主程序加载失败：{e}")
+        print(f"[错误] 控制台加载失败：{type(e).__name__}: {e}")
         return 1
-
-    try:
-        from ChatWorkspace import run_workspace
-    except Exception as e:
-        print(f"[错误] ChatUI 工作区加载失败：{type(e).__name__}: {e}")
-        return 1
-
-    print("[完成] 正在打开固定 390×844 的 ChatUI 窗口，关闭窗口即退出并保存。\n")
-    try:
-        run_workspace(
-            agent_name,
-            config_db,
-            synapses_db,
-            state_db,
-            main_func,
-            lambda config, state, syn: save_databases(agent_name, config, state, syn),
-        )
-    except Exception as e:
-        print(f"[错误] 工作区运行失败：{type(e).__name__}: {e}")
-        return 1
-    print(f"[完成] 意识体「{agent_name}」的数据库已保存。")
-    return 0
+    return launch()
 
 
 if __name__ == "__main__":

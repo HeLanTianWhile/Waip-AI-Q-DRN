@@ -1,4 +1,4 @@
-# 版本号1.5.3.0
+# 版本号2.6.3.0
 from math import tanh
 
 
