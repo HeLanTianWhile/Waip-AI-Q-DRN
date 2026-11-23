@@ -103,6 +103,55 @@ class Network:
         # 状态：NaN = NOT Activate
         self.y = np.full(self.N, np.nan, dtype=np.float64)
 
+    @classmethod
+    def from_arrays(cls, biases, roles, ipidx, a, b, w):
+        """直接从紧凑数组建网（与 __init__ 的字典路径逐元素一致，省去字典开销）。
+
+        biases/roles/ipidx: 神经元数组；a/b/w: 无向突触的端点稠密索引与权重。
+        """
+        self = cls.__new__(cls)
+        self.N = int(np.asarray(biases).size)
+        self.id_to_idx = None
+        self.bias = np.asarray(biases, dtype=np.float64)
+        roles = np.asarray(roles)
+        ipidx = np.asarray(ipidx)
+        idx = np.arange(self.N, dtype=np.int64)
+
+        self.input_idx = np.full(INPUT_COUNT, -1, dtype=np.int64)
+        self.output_idx = np.full(OUTPUT_COUNT, -1, dtype=np.int64)
+        m = (roles == 0) & (ipidx >= 0) & (ipidx < INPUT_COUNT)
+        self.input_idx[ipidx[m].astype(np.int64)] = idx[m]
+        m = (roles == 1) & (ipidx >= 0) & (ipidx < OUTPUT_COUNT)
+        self.output_idx[ipidx[m].astype(np.int64)] = idx[m]
+
+        a = np.asarray(a, dtype=np.int64)
+        b = np.asarray(b, dtype=np.int64)
+        w = np.asarray(w, dtype=np.float64)
+        valid = (a != b) & (a >= 0) & (a < self.N) & (b >= 0) & (b < self.N)
+        a, b, w = a[valid], b[valid], w[valid]
+        # 与字典路径相同的交错顺序：src=[a0,b0,a1,b1,...]，保证求和顺序一致
+        self.src = np.empty(a.size * 2, dtype=np.int64)
+        self.tgt = np.empty(a.size * 2, dtype=np.int64)
+        self.w = np.empty(a.size * 2, dtype=np.float64)
+        self.src[0::2] = a; self.src[1::2] = b
+        self.tgt[0::2] = b; self.tgt[1::2] = a
+        self.w[0::2] = w; self.w[1::2] = w
+
+        self._A = None
+        self._Amask = None
+        if HAS_SCIPY and self.src.size:
+            try:
+                self._A = csr_matrix(
+                    (self.w, (self.tgt, self.src)), shape=(self.N, self.N)
+                )
+                self._Amask = self._A != 0
+            except Exception:
+                self._A = None
+                self._Amask = None
+
+        self.y = np.full(self.N, np.nan, dtype=np.float64)
+        return self
+
     def reset_state(self):
         self.y.fill(np.nan)
 

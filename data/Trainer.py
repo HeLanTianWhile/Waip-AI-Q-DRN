@@ -18,7 +18,7 @@
 若 TRAIN 已存在则从存档继续，否则用 data_into.py 初始化 100 个网络。
 """
 
-import copy
+import gc
 import importlib.util
 import json
 import os
@@ -97,10 +97,12 @@ def _load_main_module(name, filename):
 
 
 # ---------- 网络紧凑存档（比 JSON 小数十倍，读写快） ----------
+# 内存中的种群也只保存紧凑数组：(biases, roles, ipidx, a, b, w)。
+# 一份完整字典约 180MB，100 份就是十几 GB（旧实现因此 MemoryError）；
+# 紧凑数组每份约 6MB，只有在调用 main/mutation.py 时才临时还原字典。
 
-def save_network(net_dir, config_db, synapses_db):
-    net_dir = Path(net_dir)
-    net_dir.mkdir(parents=True, exist_ok=True)
+def to_compact(config_db, synapses_db):
+    """字典数据库 → (biases, roles, ipidx, a, b, w)。"""
     ids = sorted(config_db.keys(), key=lambda k: int(k))
     id_to_idx = {nid: i for i, nid in enumerate(ids)}
     biases = np.empty(len(ids), dtype=np.float64)
@@ -120,23 +122,16 @@ def save_network(net_dir, config_db, synapses_db):
         x, y = ct[0], ct[1]
         if x not in id_to_idx or y not in id_to_idx:
             continue
-        a.append(id_to_idx[x]); b.append(id_to_idx[y]); w.append(float(syn.get("Weight", 0.0)))
-    np.save(net_dir / "biases.npy", biases)
-    np.save(net_dir / "roles.npy", roles)
-    np.save(net_dir / "ipidx.npy", ipidx)
-    np.savez(net_dir / "synapses.npz",
-             a=np.asarray(a, dtype=np.int64),
-             b=np.asarray(b, dtype=np.int64),
-             w=np.asarray(w, dtype=np.float64))
+        a.append(id_to_idx[x]); b.append(id_to_idx[y])
+        w.append(float(syn.get("Weight", 0.0)))
+    return (biases, roles, ipidx,
+            np.asarray(a, dtype=np.int64), np.asarray(b, dtype=np.int64),
+            np.asarray(w, dtype=np.float64))
 
 
-def load_network(net_dir):
-    net_dir = Path(net_dir)
-    biases = np.load(net_dir / "biases.npy")
-    roles = np.load(net_dir / "roles.npy")
-    ipidx = np.load(net_dir / "ipidx.npy")
-    syn = np.load(net_dir / "synapses.npz")
-    a, b, w = syn["a"], syn["b"], syn["w"]
+def to_dicts(compact):
+    """紧凑数组 → (config_db, synapses_db)，键名规则与旧版一致。"""
+    biases, roles, ipidx, a, b, w = compact
     n = biases.size
     config_db, synapses_db = {}, {}
     for i in range(n):
@@ -149,6 +144,38 @@ def load_network(net_dir):
             "Connection Target": [f"{int(a[k]) + 1:04d}", f"{int(b[k]) + 1:04d}"],
         }
     return config_db, synapses_db
+
+
+def copy_compact(compact):
+    return tuple(arr.copy() for arr in compact)
+
+
+def save_compact(net_dir, compact):
+    net_dir = Path(net_dir)
+    net_dir.mkdir(parents=True, exist_ok=True)
+    biases, roles, ipidx, a, b, w = compact
+    np.save(net_dir / "biases.npy", biases)
+    np.save(net_dir / "roles.npy", roles)
+    np.save(net_dir / "ipidx.npy", ipidx)
+    np.savez(net_dir / "synapses.npz", a=a, b=b, w=w)
+
+
+def load_compact(net_dir):
+    net_dir = Path(net_dir)
+    biases = np.load(net_dir / "biases.npy")
+    roles = np.load(net_dir / "roles.npy")
+    ipidx = np.load(net_dir / "ipidx.npy")
+    with np.load(net_dir / "synapses.npz") as syn:
+        a, b, w = syn["a"].copy(), syn["b"].copy(), syn["w"].copy()
+    return biases, roles, ipidx, a, b, w
+
+
+def save_network(net_dir, config_db, synapses_db):
+    save_compact(net_dir, to_compact(config_db, synapses_db))
+
+
+def load_network(net_dir):
+    return to_dicts(load_compact(net_dir))
 
 
 # ---------- 训练标记（判断上次训练是否未完成） ----------
@@ -245,7 +272,7 @@ class Trainer(QObject):
         self._stop = threading.Event()
         self._done = False              # 是否已正常跑完目标代数
         self._thread = None
-        self.population = []            # [(cfg, syn), ...]
+        self.population = []            # [compact, ...] 紧凑数组，非字典
         self.generation = 0
         self.current_meta = {}          # 最新一代元数据
         self.live_gen = None            # 正在评估的代
@@ -324,7 +351,7 @@ class Trainer(QObject):
                 for i in range(POPULATION):
                     if self._stop.is_set():
                         raise _Aborted()
-                    self.population.append(load_network(TRAIN_DIR / f"net_{i:03d}"))
+                    self.population.append(load_compact(TRAIN_DIR / f"net_{i:03d}"))
                     time.sleep(0.005)  # 主动让出 CPU/GIL，保证控制台按钮可点
                     if (i + 1) % 10 == 0 or i == 0:
                         self._log(f"  加载网络 {i + 1}/{POPULATION}")
@@ -350,7 +377,8 @@ class Trainer(QObject):
             cfg, syn, _state = self._data_into_fn(
                 input=drn_core.INPUT_COUNT, output=drn_core.OUTPUT_COUNT,
                 memory=500, Normal=2000)
-            self.population.append((cfg, syn))
+            self.population.append(to_compact(cfg, syn))
+            del cfg, syn, _state   # 字典只存在一瞬间，避免 100 份字典常驻
             time.sleep(0.005)  # 主动让出 CPU/GIL
             if (i + 1) % 10 == 0:
                 self._log(f"  初始化 {i + 1}/{POPULATION}")
@@ -394,10 +422,9 @@ class Trainer(QObject):
             if self._stop.is_set():
                 self._log(f"[已结束] 第 {gen + 1} 代评估被中断，本代不写入数据库。")
                 return
-            cfg, syn = self.population[i]
             traj = Simulator.evaluate(
-                cfg, syn, self.screen, ticks=TICKS_PER_RUN,
-                cursor_sprite=self.cursor_sprite)
+                None, None, self.screen, ticks=TICKS_PER_RUN,
+                cursor_sprite=self.cursor_sprite, compact=self.population[i])
             s = self._score_fn(traj["mouse_positions"], traj["click_positions"])
             clicks = traj["click_positions"]
             hit_w = any(
@@ -440,13 +467,19 @@ class Trainer(QObject):
             self._log(f"[多样性] 前10名得分分布正常（标准差 {score_std:.4f}），变异率不变。")
 
         # 3) 构建下一代：10 存活 + 每存活 9 子代
+        # 先释放未存活的 90 个网络，给变异阶段的临时字典腾出内存
+        keep = set(survivor_indices)
+        for i in range(len(self.population)):
+            if i not in keep:
+                self.population[i] = None
+        gc.collect()
+
         next_pop = []
         meta_list = []
         for si in survivor_indices:
             if self._stop.is_set():
                 raise _Aborted()
-            cfg, syn = self.population[si]
-            next_pop.append((copy.deepcopy(cfg), copy.deepcopy(syn)))
+            next_pop.append(copy_compact(self.population[si]))
             time.sleep(0.005)  # 存活者复制也让出 CPU/GIL
             meta_list.append({
                 "name": f"net_{len(next_pop)-1:03d}", "role": "survivor",
@@ -455,12 +488,14 @@ class Trainer(QObject):
                 "replay_gen": gen, "replay_idx": si,
             })
         for si in survivor_indices:
-            cfg_p, syn_p = self.population[si]
+            # main/mutation.py 需要字典并会 deepcopy；父代字典只在这一轮存在
+            cfg_p, syn_p = to_dicts(self.population[si])
             for mr in effective_rates:
                 if self._stop.is_set():
                     raise _Aborted()
                 cfg_c, syn_c = self._mutation_fn(cfg_p, syn_p, mutation_rate=mr)
-                next_pop.append((cfg_c, syn_c))
+                next_pop.append(to_compact(cfg_c, syn_c))
+                del cfg_c, syn_c     # 子代立即转回紧凑数组
                 time.sleep(0.005)  # 每个子代之间让出 CPU/GIL
                 meta_list.append({
                     "name": f"net_{len(next_pop)-1:03d}", "role": "child",
@@ -468,6 +503,8 @@ class Trainer(QObject):
                     "mutation_rate": mr,
                     "replay_gen": None, "replay_idx": None,
                 })
+            del cfg_p, syn_p
+            gc.collect()
 
         # 安全截断到 100
         next_pop = next_pop[:POPULATION]
@@ -526,5 +563,4 @@ class Trainer(QObject):
 
     def _save_population(self):
         for i in range(len(self.population)):
-            cfg, syn = self.population[i]
-            save_network(TRAIN_DIR / f"net_{i:03d}", cfg, syn)
+            save_compact(TRAIN_DIR / f"net_{i:03d}", self.population[i])

@@ -221,14 +221,17 @@ def load_or_render_screen(cache_path):
 
 
 def evaluate(cfg, syn, screen, ticks=TICKS_PER_RUN, cursor_overlay=True,
-             cursor_sprite=None):
+             cursor_sprite=None, compact=None):
     """
     跑一个网络 ticks 步，返回：
       mouse_positions: [(x,y), ...] 每 tick 的光标位置
       click_positions: [(x,y), ...] 发生点击的位置
       frames: [{cx,cy,vy,click}, ...] 供回放
+
+    compact=(biases,roles,ipidx,a,b,w) 时直接数组建网，避免构造字典。
     """
-    net = drn_core.Network(cfg, syn)
+    net = (drn_core.Network.from_arrays(*compact) if compact is not None
+           else drn_core.Network(cfg, syn))
     net.reset_state()
 
     cursor_x, cursor_y = SCREEN_W / 2.0, SCREEN_H / 2.0
