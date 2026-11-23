@@ -49,16 +49,16 @@ TICKS_PER_RUN = 50
 # 9 个子网络的变异率互不相同（围绕默认 0.001 几何展开，可按需调整）
 MUTATION_RATES = [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.04, 0.08, 0.16]
 
-# 自适应变异：后代得分趋同（多样性低）时，大幅提高变异率
-CONVERGE_STD = 0.05          # 标准差低于此值 → 判定趋同，变异率 ×8
+# 自适应变异：前 10 名得分趋同（多样性低）时，大幅提高变异率
+CONVERGE_STD = 0.05          # 前10名标准差低于此值 → 按趋同率放大变异率
 MUTATION_BOOST_MAX = 10.0    # 完全趋同（σ=0）时的放大倍数
 MUTATION_RATE_CAP = 0.32     # 单个子代变异率上限（防止一次改动全部突触）
 
 
 def adaptive_rates(scores):
-    """按后代得分分布返回 (boost, 实际变异率列表, 标准差)。
+    """按前 10 名得分分布返回 (boost, 实际变异率列表, 标准差)。
 
-    得分越集中（趋同），变异率放大越多，以跳出局部最优。
+    前 10 名得分越集中（趋同），变异率放大越多，以跳出局部最优。
     """
     n = len(scores)
     if n == 0:
@@ -237,9 +237,10 @@ class Trainer(QObject):
     sig_progress = Signal(int, int, float)  # (net_index, total, score)
     sig_finished = Signal()             # 训练线程结束（正常完成或被结束）
 
-    def __init__(self, screen, target_gen=None):
+    def __init__(self, screen, target_gen=None, cursor_sprite=None):
         super().__init__()
         self.screen = screen
+        self.cursor_sprite = cursor_sprite  # (灰度, alpha) 仿真光标
         self.target_gen = target_gen    # 绝对值：generation 达到该值即停；None=一直训练
         self._stop = threading.Event()
         self._done = False              # 是否已正常跑完目标代数
@@ -273,13 +274,13 @@ class Trainer(QObject):
 
     @staticmethod
     def _lower_thread_priority(thread):
-        """Windows：把训练线程降到 BELOW_NORMAL，避免它把界面线程饿死。"""
+        """Windows：把训练线程降到 IDLE，避免它把界面线程饿死。"""
         try:
             import ctypes
             k32 = ctypes.windll.kernel32
             h = k32.OpenThread(0x0020 | 0x0040, False, thread.native_id)  # SET|QUERY
             if h:
-                k32.SetThreadPriority(h, -1)   # THREAD_PRIORITY_BELOW_NORMAL
+                k32.SetThreadPriority(h, -15)  # THREAD_PRIORITY_IDLE：界面/操作优先
                 k32.CloseHandle(h)
         except Exception:
             pass
@@ -324,6 +325,7 @@ class Trainer(QObject):
                     if self._stop.is_set():
                         raise _Aborted()
                     self.population.append(load_network(TRAIN_DIR / f"net_{i:03d}"))
+                    time.sleep(0.005)  # 主动让出 CPU/GIL，保证控制台按钮可点
                     if (i + 1) % 10 == 0 or i == 0:
                         self._log(f"  加载网络 {i + 1}/{POPULATION}")
                 self.current_meta = meta
@@ -349,6 +351,7 @@ class Trainer(QObject):
                 input=drn_core.INPUT_COUNT, output=drn_core.OUTPUT_COUNT,
                 memory=500, Normal=2000)
             self.population.append((cfg, syn))
+            time.sleep(0.005)  # 主动让出 CPU/GIL
             if (i + 1) % 10 == 0:
                 self._log(f"  初始化 {i + 1}/{POPULATION}")
         self._save_population()
@@ -392,7 +395,9 @@ class Trainer(QObject):
                 self._log(f"[已结束] 第 {gen + 1} 代评估被中断，本代不写入数据库。")
                 return
             cfg, syn = self.population[i]
-            traj = Simulator.evaluate(cfg, syn, self.screen, ticks=TICKS_PER_RUN)
+            traj = Simulator.evaluate(
+                cfg, syn, self.screen, ticks=TICKS_PER_RUN,
+                cursor_sprite=self.cursor_sprite)
             s = self._score_fn(traj["mouse_positions"], traj["click_positions"])
             clicks = traj["click_positions"]
             hit_w = any(
@@ -412,6 +417,7 @@ class Trainer(QObject):
                 "score": float(s), "clicks": len(clicks), "hit_w": bool(hit_w),
             }
             self.sig_progress.emit(i + 1, POPULATION, float(s))
+            time.sleep(0.005)  # 每个网络之间让出 CPU/GIL，避免界面卡死
             if (i + 1) % 10 == 0 or i == 0:
                 self._log(f"  评估 net_{i:03d}  score={s:+.4f}  "
                           f"clicks={len(clicks)}  hit_W={'YES' if hit_w else 'no'}")
@@ -422,16 +428,16 @@ class Trainer(QObject):
         survivors = ranked[:SURVIVORS]                             # 前 10
         survivor_indices = [int(name.split("_")[1]) for name in survivors]
 
-        # 2.5) 多样性检测：得分越趋同，变异率越高（避免陷入局部最优）
+        # 2.5) 多样性检测：只看前 10 名得分；越趋同，变异率越高
         mutation_boost, effective_rates, score_std = adaptive_rates(
-            [r["score"] for r in results])
+            [scores[name] for name in survivors])
         if mutation_boost > 1.0:
             ratio = 1.0 - score_std / CONVERGE_STD
-            self._log(f"[多样性] 得分趋同（σ={score_std:.4f}，趋同率 {ratio * 100:.0f}%）"
+            self._log(f"[多样性] 前10名得分趋同（σ={score_std:.4f}，趋同率 {ratio * 100:.0f}%）"
                       f"→ 变异率 ×{mutation_boost:g}："
                       f"{effective_rates[0]:.4g} ~ {effective_rates[-1]:.4g}")
         else:
-            self._log(f"[多样性] 得分分布正常（标准差 {score_std:.4f}），变异率不变。")
+            self._log(f"[多样性] 前10名得分分布正常（标准差 {score_std:.4f}），变异率不变。")
 
         # 3) 构建下一代：10 存活 + 每存活 9 子代
         next_pop = []
@@ -441,6 +447,7 @@ class Trainer(QObject):
                 raise _Aborted()
             cfg, syn = self.population[si]
             next_pop.append((copy.deepcopy(cfg), copy.deepcopy(syn)))
+            time.sleep(0.005)  # 存活者复制也让出 CPU/GIL
             meta_list.append({
                 "name": f"net_{len(next_pop)-1:03d}", "role": "survivor",
                 "parent": si, "score": scores[f"net_{si:03d}"],
@@ -454,6 +461,7 @@ class Trainer(QObject):
                     raise _Aborted()
                 cfg_c, syn_c = self._mutation_fn(cfg_p, syn_p, mutation_rate=mr)
                 next_pop.append((cfg_c, syn_c))
+                time.sleep(0.005)  # 每个子代之间让出 CPU/GIL
                 meta_list.append({
                     "name": f"net_{len(next_pop)-1:03d}", "role": "child",
                     "parent": si, "score": None,

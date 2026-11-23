@@ -1,0 +1,16 @@
+[
+    {
+        "type":"mouse_move",
+        "x":0,
+        "y":0
+    },
+    {
+        "type":"click",
+        "x":0,
+        "y":0
+    },
+    {
+        "type":"move_view",
+        "y":0
+    }
+]

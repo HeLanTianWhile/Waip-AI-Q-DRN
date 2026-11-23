@@ -460,6 +460,7 @@ class ConsoleWindow(QMainWindow):
             self.statusBar().showMessage("正在准备屏幕（首次会渲染 ChatUI）…")
             QApplication.processEvents()
             screen = Simulator.load_or_render_screen(TRAIN_DIR / "screen.npy")
+            cursor_sprite = Simulator.load_or_render_cursor(TRAIN_DIR / "cursor.npz")
         except Exception as e:
             QMessageBox.critical(self, "无法渲染屏幕", str(e))
             self.statusBar().clearMessage()
@@ -482,7 +483,8 @@ class ConsoleWindow(QMainWindow):
             except Exception:
                 self._pending_meta = None
         try:
-            self.trainer = Trainer(screen, target_gen=target_gen)
+            self.trainer = Trainer(screen, target_gen=target_gen,
+                                   cursor_sprite=cursor_sprite)
             self.trainer.sig_progress.connect(self._on_progress)
             self.trainer.sig_generation_done.connect(self._on_generation_done)
             self.trainer.sig_finished.connect(self._on_finished)
