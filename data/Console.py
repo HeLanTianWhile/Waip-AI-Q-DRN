@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QListWidget, QListWidgetItem, QPlainTextEdit,
     QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QStackedWidget,
     QSplitter, QAbstractItemView, QMessageBox, QComboBox, QInputDialog,
-    QDoubleSpinBox, QSpinBox, QFormLayout,
+    QDoubleSpinBox, QSpinBox, QFormLayout, QDialog, QRadioButton,
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 import numpy as np
@@ -459,6 +459,136 @@ class LessonEditorWindow(QMainWindow):
         self.statusBar().showMessage(f"已保存 {path}（下次开始训练时生效）", 8000)
 
 
+# ===================== 开始训练对话框 =====================
+
+class TrainStartDialog(QDialog):
+    """开始训练前的设置：训练代数 + 单个/多个课程选择。"""
+
+    def __init__(self, parent=None, preselect_lessons=None, default_count=10):
+        super().__init__(parent)
+        self.setWindowTitle("开始训练")
+        self.setMinimumWidth(440)
+        self._result = None
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(18, 18, 18, 18)
+        v.setSpacing(12)
+
+        title = QLabel("训练设置")
+        title.setStyleSheet("font-size:16px; font-weight:bold;")
+        v.addWidget(title)
+
+        form = QFormLayout()
+        self.gen_spin = QSpinBox()
+        self.gen_spin.setRange(1, 100000)
+        self.gen_spin.setValue(max(1, int(default_count)))
+        form.addRow("训练多少代：", self.gen_spin)
+        v.addLayout(form)
+
+        self.mode_single = QRadioButton("训练单个课程（下拉选一个）")
+        self.mode_multi = QRadioButton("训练多个课程（可勾选多个）")
+        self.mode_single.setChecked(True)
+        v.addWidget(self.mode_single)
+        v.addWidget(self.mode_multi)
+
+        self.single_combo = QComboBox()
+        v.addWidget(self.single_combo)
+
+        self.multi_list = QListWidget()
+        self.multi_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.multi_list.setMaximumHeight(220)
+        v.addWidget(self.multi_list)
+        self.multi_list.hide()
+
+        self.mode_single.toggled.connect(self._switch_mode)
+        self.mode_multi.toggled.connect(self._switch_mode)
+
+        self.hint = QLabel("")
+        self.hint.setStyleSheet(f"color:{MUTED}; font-size:12px;")
+        self.hint.setWordWrap(True)
+        v.addWidget(self.hint)
+
+        btns = QHBoxLayout()
+        btns.addStretch()
+        cancel = QPushButton("取消")
+        ok = QPushButton("开始训练")
+        ok.setStyleSheet(f"border-color:{ACCENT};")
+        cancel.clicked.connect(self.reject)
+        ok.clicked.connect(self._accept)
+        btns.addWidget(cancel)
+        btns.addWidget(ok)
+        v.addLayout(btns)
+
+        self._fill_lessons(preselect_lessons)
+        self._switch_mode()
+
+    def _fill_lessons(self, preselect):
+        names = Trainer.available_lessons()
+        self.single_combo.clear()
+        self.single_combo.addItems(names)
+        self.multi_list.clear()
+        for nm in names:
+            item = QListWidgetItem(nm)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.multi_list.addItem(item)
+        if preselect:
+            for nm in preselect:
+                idx = self.single_combo.findText(nm)
+                if idx >= 0:
+                    self.single_combo.setCurrentIndex(idx)
+                    break
+            for j in range(self.multi_list.count()):
+                it = self.multi_list.item(j)
+                if it.text() in preselect:
+                    it.setCheckState(Qt.Checked)
+        if not names:
+            self.hint.setText("未找到任何课程（data/class/class-*.json），请先在课程编辑器里创建。")
+
+    def _switch_mode(self):
+        single = self.mode_single.isChecked()
+        self.single_combo.setVisible(single)
+        self.multi_list.setVisible(not single)
+        total = 0
+        if single:
+            if self.single_combo.count():
+                total = 1
+        else:
+            for j in range(self.multi_list.count()):
+                if self.multi_list.item(j).checkState() == Qt.Checked:
+                    total += 1
+        if total:
+            self.hint.setText(
+                f"已选 {total} 个课程。每代每个网络都会跑完所有选中课程，综合得分取平均。")
+        else:
+            self.hint.setText("请至少选择一个课程。")
+
+    def _selected_lessons(self):
+        if self.mode_single.isChecked():
+            nm = self.single_combo.currentText()
+            return [nm] if nm else []
+        out = []
+        for j in range(self.multi_list.count()):
+            it = self.multi_list.item(j)
+            if it.checkState() == Qt.Checked:
+                out.append(it.text())
+        return out
+
+    def _accept(self):
+        lessons = self._selected_lessons()
+        if not lessons:
+            QMessageBox.warning(self, "缺少课程", "请至少选择一个课程。")
+            return
+        if self.mode_single.isChecked() and len(lessons) != 1:
+            QMessageBox.warning(self, "单选模式", "单个课程模式只能选择一个课程。")
+            return
+        self._result = (int(self.gen_spin.value()), lessons)
+        self.accept()
+
+    def get_result(self):
+        return self._result
+
+
 # ===================== 控制台主窗口 =====================
 
 class ConsoleWindow(QMainWindow):
@@ -577,9 +707,10 @@ class ConsoleWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setFixedWidth(220); self.progress.setRange(0, 100)
         top.addWidget(self.progress)
-        self.stop_btn = QPushButton("⏹ 结束训练")
-        self.stop_btn.clicked.connect(self._stop_train)
-        top.addWidget(self.stop_btn)
+        self.train_btn = QPushButton("▶ 开始训练")
+        self.train_btn.setStyleSheet(f"border-color:{ACCENT};")
+        self.train_btn.clicked.connect(self._toggle_train)
+        top.addWidget(self.train_btn)
         v.addLayout(top)
 
         split = QSplitter(Qt.Horizontal)
@@ -598,7 +729,14 @@ class ConsoleWindow(QMainWindow):
         split.addWidget(left)
         # 右：网络管理表
         right = QWidget(); rv = QVBoxLayout(right); rv.setContentsMargins(6, 0, 0, 0)
-        rv.addWidget(QLabel("当前代网络（点击“观看”查看该网络上一代如何点击 W 键）"))
+        hdr = QHBoxLayout()
+        hdr.addWidget(QLabel("当前代网络（点击“观看”查看该网络在课程中的点击过程）"))
+        hdr.addStretch()
+        hdr.addWidget(QLabel("观看课程"))
+        self.watch_lesson_box = QComboBox()
+        self.watch_lesson_box.setFixedWidth(120)
+        hdr.addWidget(self.watch_lesson_box)
+        rv.addLayout(hdr)
         self.net_table = QTableWidget(0, 7)
         self.net_table.setHorizontalHeaderLabels(
             ["编号", "角色", "上一代得分", "命中W", "点击数", "父代", "观看"])
@@ -620,17 +758,60 @@ class ConsoleWindow(QMainWindow):
     def goto_train(self):
         self.stack.setCurrentIndex(2)
 
-        # 已有训练线程在跑 → 直接回到训练面板
+        # 已有训练线程在跑 → 回到训练面板，按钮显示“结束训练”
         if self.trainer is not None and self.trainer.is_running():
+            self._update_train_button()
             self._refresh_train_view()
+            if not self._log_timer.isActive():
+                self._log_timer.start()
             return
         # 线程已结束 → 允许重新开始
         if self.trainer is not None and not self.trainer.is_running():
             self.trainer = None
 
+        # 只导航，不弹窗：从磁盘读取上一代元数据，让“观看”在未训练时也能用
+        self._load_pending_meta()
         self._reload_log_file()
+        self._refresh_train_view()
+        self._update_train_button()
 
-        # 1) 检查训练标记：有 → 继续上次训练
+        # 检测另一个进程是否正在训练同一份存档
+        lock = TrainerMod.read_lock()
+        if lock and lock.get("state") == "running":
+            pid = lock.get("pid")
+            if pid and int(pid) != os.getpid() and TrainerMod.pid_alive(pid):
+                self.statusBar().showMessage(
+                    f"另一个进程（PID {pid}）正在训练，请先关闭它再开始。")
+                return
+            # 本进程残留 / 已崩溃的锁：不阻塞，开始训练时会自动从存档继续
+            self.statusBar().showMessage(
+                f"检测到未完成的训练（第 {lock.get('generation', '?')} 代），"
+                "点击「开始训练」将从存档继续。")
+
+    def _load_pending_meta(self):
+        path = TRAIN_DIR / "generation.json"
+        if path.exists():
+            try:
+                self._pending_meta = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                self._pending_meta = None
+        else:
+            self._pending_meta = None
+
+    def _update_train_button(self):
+        running = self.trainer is not None and self.trainer.is_running()
+        self.train_btn.setEnabled(True)
+        if running:
+            self.train_btn.setText("⏹ 结束训练")
+        else:
+            self.train_btn.setText("▶ 开始训练")
+
+    def _toggle_train(self):
+        if self.trainer is not None and self.trainer.is_running():
+            self._stop_train()
+            return
+        # 另一个进程在训练 → 不允许开始
+        pre = None
         lock = TrainerMod.read_lock()
         if lock and lock.get("state") == "running":
             pid = lock.get("pid")
@@ -640,18 +821,13 @@ class ConsoleWindow(QMainWindow):
                     f"检测到另一个进程（PID {pid}）正在训练。\n"
                     "请先关闭那个窗口，避免两个进程同时写同一份存档。")
                 return
-            target_gen = lock.get("target_gen")
-            target_gen = int(target_gen) if target_gen is not None else None
-            self._start_train(target_gen=target_gen, resumed=True)
+            pre = lock.get("lessons")
+        dlg = TrainStartDialog(self, preselect_lessons=pre)
+        if dlg.exec() != QDialog.Accepted:
             return
-
-        # 2) 没有标记 → 询问训练范围
-        count = self._ask_train_scope()
-        if count is None:
-            self.stack.setCurrentIndex(0)
-            return
+        count, lessons = dlg.get_result()
         target_gen = self._current_generation() + count
-        self._start_train(target_gen=target_gen, resumed=False)
+        self._start_train(target_gen=target_gen, lessons=lessons, resumed=False)
 
     def _current_generation(self):
         path = TRAIN_DIR / "generation.json"
@@ -661,25 +837,6 @@ class ConsoleWindow(QMainWindow):
             except Exception:
                 return 0
         return 0
-
-    def _ask_train_scope(self):
-        """返回本次要训练的代数；取消返回 None。"""
-        box = QMessageBox(self)
-        box.setWindowTitle("训练设置")
-        box.setIcon(QMessageBox.Question)
-        box.setText("本次训练要跑多少代？")
-        one_btn = box.addButton("训练一代", QMessageBox.AcceptRole)
-        many_btn = box.addButton("指定代数…", QMessageBox.ActionRole)
-        box.addButton("取消", QMessageBox.RejectRole)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is one_btn:
-            return 1
-        if clicked is many_btn:
-            n, ok = QInputDialog.getInt(
-                self, "训练代数", "本次训练多少代？", 10, 1, 100000)
-            return n if ok else None
-        return None
 
     def _install_sigint(self):
         """Ctrl+C / Ctrl+Break：结束训练并退出控制台。"""
@@ -780,7 +937,7 @@ class ConsoleWindow(QMainWindow):
 
     # ---------- 训练 ----------
 
-    def _start_train(self, target_gen=None, resumed=False):
+    def _start_train(self, target_gen=None, resumed=False, lessons=None):
         try:
             self.statusBar().showMessage("正在准备屏幕（首次会渲染 ChatUI）…")
             QApplication.processEvents()
@@ -800,16 +957,10 @@ class ConsoleWindow(QMainWindow):
         self._quit_when_done = False
         self._table_sig = None
         # 立即读取上一代元数据，让列表在加载存档期间就显示已有的 100 个网络
-        self._pending_meta = None
-        meta_path = TRAIN_DIR / "generation.json"
-        if meta_path.exists():
-            try:
-                self._pending_meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            except Exception:
-                self._pending_meta = None
+        self._load_pending_meta()
         try:
             self.trainer = Trainer(screen, target_gen=target_gen,
-                                   cursor_sprite=cursor_sprite)
+                                   cursor_sprite=cursor_sprite, lessons=lessons)
             self.trainer.sig_progress.connect(self._on_progress)
             self.trainer.sig_generation_done.connect(self._on_generation_done)
             self.trainer.sig_finished.connect(self._on_finished)
@@ -821,10 +972,10 @@ class ConsoleWindow(QMainWindow):
             self._log_timer.stop()
             QMessageBox.critical(self, "训练启动失败", f"{type(e).__name__}: {e}")
             self.statusBar().clearMessage()
+            self._update_train_button()
             return
 
-        self.stop_btn.setEnabled(True)
-        self.stop_btn.setText("⏹ 结束训练")
+        self._update_train_button()
         if target_gen is not None:
             self.statusBar().showMessage(
                 f"训练进行中（目标第 {target_gen} 代）· 可按 Ctrl+C 停止")
@@ -843,8 +994,9 @@ class ConsoleWindow(QMainWindow):
     def _on_finished(self):
         self._tail_log()
         self._log_timer.stop()
-        self.stop_btn.setEnabled(False)
-        self.statusBar().showMessage("训练已结束。")
+        self._load_pending_meta()
+        self._update_train_button()
+        self.statusBar().showMessage("训练已结束，可点击「开始训练」继续。")
         self._refresh_train_view()
         if self._quit_when_done:
             self._quit_when_done = False
@@ -908,12 +1060,12 @@ class ConsoleWindow(QMainWindow):
             f"平均 {meta['prev_mean']:+.4f}  命中W {meta['prev_hit_count']}/100")
 
     def _refresh_train_view(self):
-        if not self.trainer:
-            return
-        meta = self.trainer.current_meta or self._pending_meta or {}
-        gen = meta.get("generation", self.trainer.generation)
-        if getattr(self.trainer, "target_gen", None) is not None:
-            self.gen_label.setText(f"第 {gen} 代 / 目标 {self.trainer.target_gen}")
+        trainer = self.trainer
+        meta = (trainer.current_meta if trainer is not None else None) or self._pending_meta or {}
+        gen = meta.get("generation", (trainer.generation if trainer is not None else 0))
+        target = getattr(trainer, "target_gen", None) if trainer is not None else None
+        if target is not None:
+            self.gen_label.setText(f"第 {gen} 代 / 目标 {target}")
         else:
             self.gen_label.setText(f"第 {gen} 代")
         best = meta.get("prev_best"); mean = meta.get("prev_mean")
@@ -925,22 +1077,29 @@ class ConsoleWindow(QMainWindow):
         boost = meta.get("mutation_boost")
         if boost and boost > 1:
             parts.append(f"趋同 σ={meta.get('score_std', 0):.4f} 变异率×{boost:g}")
-        if not (self.trainer.is_running()
-                and getattr(self.trainer, "live_results", None)):
-            self.stats_label.setText("  |  ".join(parts))
+
+        running = trainer is not None and trainer.is_running()
+        live = (getattr(trainer, "live_results", None) if trainer is not None else None) or {}
+        loaded = len(trainer.population) if trainer is not None else 0
 
         pop = meta.get("population", [])
-        results = meta.get("results", {})
-        live = getattr(self.trainer, "live_results", None) or {}
-        loaded = len(self.trainer.population)
-
         if not pop:
-            # 没有任何一代元数据：按已加载数量显示
-            if self.trainer.is_running():
+            if running:
                 if gen > 0:
                     self.stats_label.setText(f"第 {gen} 代 · 正在加载网络 {loaded}/100…")
                 else:
                     self.stats_label.setText(f"首次初始化网络 {loaded}/100…")
+            else:
+                self.stats_label.setText(
+                    "尚未开始训练。点击右上角「开始训练」选择课程与代数；"
+                    "下方表格可观看已有回放。")
+        elif not (running and live):
+            self.stats_label.setText("  |  ".join(parts))
+
+        self._refresh_watch_lessons(meta)
+
+        results = meta.get("results", {})
+        if not pop:
             n = loaded
         else:
             n = len(pop)
@@ -989,7 +1148,7 @@ class ConsoleWindow(QMainWindow):
                 watch = QPushButton()
                 watch.clicked.connect(lambda _=False, r=row: self._watch_row(r))
                 self.net_table.setCellWidget(row, 6, watch)
-            rg, ri, _, _ = self._watch_state(row)
+            rg, ri, _, _, _ = self._watch_state(row)
             if rg is None or ri is None:
                 if watch.isEnabled() or watch.text() != "未推演":
                     watch.setEnabled(False)
@@ -1003,38 +1162,65 @@ class ConsoleWindow(QMainWindow):
             self.net_table.resizeRowsToContents()
         sb.setValue(scroll_pos)
 
+    def _refresh_watch_lessons(self, meta):
+        lessons = list(meta.get("lessons") or [])
+        if not lessons and meta.get("lesson"):
+            lessons = [meta["lesson"]]
+        current = [self.watch_lesson_box.itemText(i)
+                   for i in range(self.watch_lesson_box.count())]
+        if current != lessons:
+            keep = self.watch_lesson_box.currentText()
+            self.watch_lesson_box.blockSignals(True)
+            self.watch_lesson_box.clear()
+            self.watch_lesson_box.addItems(lessons)
+            if keep in lessons:
+                self.watch_lesson_box.setCurrentText(keep)
+            self.watch_lesson_box.blockSignals(False)
+        self.watch_lesson_box.setVisible(len(lessons) > 1)
+
     def _watch_state(self, row):
-        """返回 (replay_gen, replay_idx, score, hit_w)；本代未推演则为 None。"""
-        meta = self.trainer.current_meta or self._pending_meta or {}
-        live = getattr(self.trainer, "live_results", None) or {}
+        """返回 (replay_gen, replay_idx, score, hit_w, lesson_id)；未推演则前两项为 None。"""
+        trainer = self.trainer
+        meta = (trainer.current_meta if trainer is not None else None) or self._pending_meta or {}
+        lessons = meta.get("lessons") or ([meta["lesson"]] if meta.get("lesson") else [])
+        lesson_id = self.watch_lesson_box.currentText() or (lessons[0] if lessons else None)
+        live = (getattr(trainer, "live_results", None) if trainer is not None else None) or {}
         lr = live.get(row)
         if lr is not None:
-            return getattr(self.trainer, "live_gen", None), row, lr["score"], lr["hit_w"]
+            return (getattr(trainer, "live_gen", None), row,
+                    lr["score"], lr["hit_w"], lesson_id)
         if live:
-            return None, None, None, None
+            return None, None, None, None, lesson_id
         pop = meta.get("population") or []
         m = pop[row] if row < len(pop) else {}
         res = (meta.get("results") or {}).get(m.get("name"), {}) or {}
-        return m.get("replay_gen"), m.get("replay_idx"), m.get("score"), res.get("hit_w")
+        return m.get("replay_gen"), m.get("replay_idx"), m.get("score"), res.get("hit_w"), lesson_id
 
     def _watch_row(self, row):
-        rg, ri, score, hit = self._watch_state(row)
+        rg, ri, score, hit, lesson_id = self._watch_state(row)
         if rg is None or ri is None:
             self.statusBar().showMessage("该网络本代还未推演，暂无回放。")
             return
-        self._open_replay(rg, ri, f"net_{row:03d}", score, bool(hit))
+        self._open_replay(rg, ri, f"net_{row:03d}", score, bool(hit), lesson_id)
 
-    def _open_replay(self, gen, idx, name, score, hit_w):
-        path = TRAIN_DIR / "replays" / f"gen_{gen}" / f"net_{idx:03d}.json"
-        if not path.exists():
-            QMessageBox.warning(self, "无回放", f"找不到回放文件：{path}")
+    def _open_replay(self, gen, idx, name, score, hit_w, lesson_id=None):
+        candidates = []
+        if lesson_id:
+            candidates.append(
+                TRAIN_DIR / "replays" / f"gen_{gen}" / lesson_id / f"net_{idx:03d}.json")
+        candidates.append(TRAIN_DIR / "replays" / f"gen_{gen}" / f"net_{idx:03d}.json")
+        path = next((p for p in candidates if p.exists()), None)
+        if path is None:
+            shown = candidates[0] if candidates else "(无)"
+            QMessageBox.warning(self, "无回放", f"找不到回放文件：{shown}")
             return
         try:
             traj = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
             QMessageBox.warning(self, "读取失败", str(e))
             return
-        w = ReplayWindow(traj, name, score, hit_w, self)
+        title = f"{name}" + (f" · {lesson_id}" if lesson_id else "")
+        w = ReplayWindow(traj, title, score, hit_w, self)
         self._replay_windows.append(w)
         w.show()
 

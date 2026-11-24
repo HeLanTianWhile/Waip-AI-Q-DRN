@@ -211,7 +211,7 @@ def pid_alive(pid):
         return False
 
 
-def write_lock(generation, target_gen=None, state="running"):
+def write_lock(generation, target_gen=None, state="running", lessons=None):
     """写入/更新训练标记。异常退出时会残留，用于下次“继续训练”。"""
     TRAIN_DIR.mkdir(parents=True, exist_ok=True)
     data = {
@@ -219,6 +219,7 @@ def write_lock(generation, target_gen=None, state="running"):
         "pid": os.getpid(),
         "generation": int(generation),
         "target_gen": None if target_gen is None else int(target_gen),
+        "lessons": list(lessons) if lessons else None,
         "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -264,7 +265,7 @@ class Trainer(QObject):
     sig_progress = Signal(int, int, float)  # (net_index, total, score)
     sig_finished = Signal()             # 训练线程结束（正常完成或被结束）
 
-    def __init__(self, screen, target_gen=None, cursor_sprite=None):
+    def __init__(self, screen, target_gen=None, cursor_sprite=None, lessons=None):
         super().__init__()
         self.screen = screen
         self.cursor_sprite = cursor_sprite  # (灰度, alpha) 仿真光标
@@ -282,22 +283,64 @@ class Trainer(QObject):
         self._rank_fn = _load_main_module("drn_rank", "rank.py").rank
         self._mutation_fn = _load_main_module("drn_mutation", "mutation.py").mutation
         self._data_into_fn = _load_main_module("drn_data_into", "data_into.py").data_into
-        self._lesson_id = None
-        self._lesson = None
-        self._lesson_error = None
-        lesson_path = DATA_DIR / "class" / "class-1.json"
-        if lesson_path.exists():
+        self._lessons = []              # [(lesson_id, steps), ...]  支持同时训练多个课程
+        self._lesson_errors = []
+        self._load_lessons(lessons)
+
+    # ---- 课程管理 ----
+
+    @staticmethod
+    def available_lessons():
+        """data/class/ 下所有 class-*.json 文件名（按课程编号排序）。"""
+        cdir = DATA_DIR / "class"
+        if not cdir.exists():
+            return []
+
+        def _key(p):
             try:
-                self._lesson = self._score_mod.load_lesson(lesson_path)
-                self._lesson_id = "class-1"
+                return (0, int(p.stem.split("-")[-1]))
+            except Exception:
+                return (1, p.stem)
+
+        return [p.name for p in sorted(cdir.glob("class-*.json"), key=_key)]
+
+    def _load_lessons(self, lessons):
+        """lessons: 文件名列表，如 ['class-1.json']；None/空 → 默认 class-1。"""
+        self._lessons = []
+        self._lesson_errors = []
+        if not lessons:
+            lessons = (["class-1.json"]
+                       if (DATA_DIR / "class" / "class-1.json").exists() else [])
+        seen = set()
+        for name in lessons:
+            if name in seen:
+                continue
+            seen.add(name)
+            lesson_id = Path(name).stem  # class-1
+            path = DATA_DIR / "class" / name
+            if not path.exists():
+                self._lesson_errors.append(f"{name} 不存在")
+                continue
+            try:
+                steps = self._score_mod.load_lesson(path)
+                self._lessons.append((lesson_id, steps))
             except Exception as e:
-                self._lesson_error = str(e)
+                self._lesson_errors.append(f"{name}: {e}")
+
+    @property
+    def lesson_ids(self):
+        return [lid for lid, _ in self._lessons]
+
+    @staticmethod
+    def lesson_ticks(lesson):
+        total = sum(int(st["ticks"]) for st in lesson)
+        return total if total > 0 else TICKS_PER_RUN
 
     @property
     def eval_ticks(self):
-        """评估 tick 数由课程步骤的时间窗合计决定，不再固定 50。"""
-        if self._lesson:
-            total = sum(st["ticks"] for st in self._lesson)
+        """每网络每代合计 tick = 所有选中课程时间窗之和。"""
+        if self._lessons:
+            total = sum(self.lesson_ticks(steps) for _, steps in self._lessons)
             if total > 0:
                 return total
         return TICKS_PER_RUN
@@ -309,7 +352,7 @@ class Trainer(QObject):
             return
         self._stop.clear()
         self._done = False
-        write_lock(self.generation, self.target_gen, "running")
+        write_lock(self.generation, self.target_gen, "running", self.lesson_ids)
         # 让主线程（界面/观看）更容易抢到 GIL
         try:
             sys.setswitchinterval(0.0005)
@@ -409,14 +452,18 @@ class Trainer(QObject):
 
     def _run(self):
         try:
-            if self._lesson is None:
-                reason = self._lesson_error or "缺少 data/class/class-1.json"
+            if not self._lessons:
+                reason = "；".join(self._lesson_errors) or "缺少 data/class/class-*.json"
                 self._log(f"[错误] 课程未加载（{reason}），无法训练。")
                 return
             self._load_or_init()
-            seq = " → ".join(st["type"] for st in self._lesson)
-            self._log(f"课程：{self._lesson_id}（{len(self._lesson)} 步：{seq}）")
-            write_lock(self.generation, self.target_gen, "running")
+            for lid, steps in self._lessons:
+                seq = " → ".join(st["type"] for st in steps)
+                self._log(f"课程：{lid}（{len(steps)} 步：{seq}，"
+                          f"{self.lesson_ticks(steps)} tick）")
+            self._log(f"本轮共 {len(self._lessons)} 个课程：每代每个网络都要跑完"
+                      f"所有课程，综合得分取平均。")
+            write_lock(self.generation, self.target_gen, "running", self.lesson_ids)
             while not self._stop.is_set() and not self._done:
                 self._run_generation()
         except _Aborted:
@@ -441,7 +488,7 @@ class Trainer(QObject):
         self._log(f"种群 {POPULATION} | 存活 {SURVIVORS} | "
                   f"每存活 {CHILDREN_PER_SURVIVOR} 子代 | 每网络 {ticks} tick")
 
-        # 1) 评估全部 100 个网络
+        # 1) 评估全部 100 个网络：每个网络都要跑完所有选中课程，综合得分取平均
         results = []
         self.live_gen = gen
         self.live_results = {}
@@ -449,34 +496,56 @@ class Trainer(QObject):
             if self._stop.is_set():
                 self._log(f"[已结束] 第 {gen + 1} 代评估被中断，本代不写入数据库。")
                 return
-            traj = Simulator.evaluate(
-                None, None, self.screen, ticks=ticks,
-                cursor_sprite=self.cursor_sprite, compact=self.population[i])
-            report = self._score_mod.score_lesson(self._lesson, traj["frames"])
-            s = report["score"]
-            steps_done = sum(1 for st in report["steps"] if st["done"])
-            clicks = traj["click_positions"]
-            hit_w = any(st["type"] == "click" and st["done"] for st in report["steps"])
-            # 保存回放（供控制台“观看”），按代归档避免进化后对错号
-            replay_dir = TRAIN_DIR / "replays" / f"gen_{gen}"
-            replay_dir.mkdir(parents=True, exist_ok=True)
-            with open(replay_dir / f"net_{i:03d}.json", "w", encoding="utf-8") as f:
-                json.dump(traj, f)
+            per_lesson = []
+            total_clicks = 0
+            last_traj = None
+            for lid, steps in self._lessons:
+                if self._stop.is_set():
+                    self._log(f"[已结束] 第 {gen + 1} 代评估被中断，本代不写入数据库。")
+                    return
+                lticks = self.lesson_ticks(steps)
+                traj = Simulator.evaluate(
+                    None, None, self.screen, ticks=lticks,
+                    cursor_sprite=self.cursor_sprite, compact=self.population[i])
+                report = self._score_mod.score_lesson(steps, traj["frames"])
+                ls = report["score"]
+                steps_done = sum(1 for st in report["steps"] if st["done"])
+                clicks = traj["click_positions"]
+                total_clicks += len(clicks)
+                last_traj = traj
+                # 每课程一份回放，按代归档避免进化后对错号
+                replay_dir = TRAIN_DIR / "replays" / f"gen_{gen}" / lid
+                replay_dir.mkdir(parents=True, exist_ok=True)
+                with open(replay_dir / f"net_{i:03d}.json", "w", encoding="utf-8") as f:
+                    json.dump(traj, f)
+                per_lesson.append({
+                    "lesson": lid, "score": float(ls),
+                    "clicks": len(clicks), "completed": bool(report["completed"]),
+                    "steps_done": steps_done, "steps_total": len(steps),
+                })
+                time.sleep(0.002)  # 课程之间也让一下 GIL
+            s = sum(pl["score"] for pl in per_lesson) / len(per_lesson)
+            completed_all = all(pl["completed"] for pl in per_lesson)
+            last_pos = (last_traj["mouse_positions"][-1]
+                        if last_traj and last_traj["mouse_positions"] else (0, 0))
             results.append({
                 "idx": i, "score": float(s),
-                "clicks": len(clicks), "hit_w": bool(hit_w),
-                "steps_done": steps_done,
-                "last_pos": traj["mouse_positions"][-1],
+                "clicks": total_clicks, "hit_w": bool(completed_all),
+                "steps_done": sum(pl["steps_done"] for pl in per_lesson),
+                "last_pos": last_pos,
+                "per_lesson": per_lesson,
             })
             self.live_results[i] = {
-                "score": float(s), "clicks": len(clicks), "hit_w": bool(hit_w),
+                "score": float(s), "clicks": total_clicks, "hit_w": bool(completed_all),
             }
             self.sig_progress.emit(i + 1, POPULATION, float(s))
             time.sleep(0.005)  # 每个网络之间让出 CPU/GIL，避免界面卡死
             if (i + 1) % 10 == 0 or i == 0:
-                self._log(f"  评估 net_{i:03d}  score={s:+.4f}  "
-                          f"clicks={len(clicks)}  hit={'YES' if hit_w else 'no'}"
-                          f"  steps={steps_done}/{len(self._lesson)}")
+                detail = "  ".join(
+                    f"{pl['lesson']}={pl['score']:+.3f}{'✓' if pl['completed'] else ''}"
+                    for pl in per_lesson)
+                self._log(f"  评估 net_{i:03d}  综合={s:+.4f}  clicks={total_clicks}  "
+                          f"完成={'YES' if completed_all else 'no'}  [{detail}]")
 
         # 2) 打分 → 排序 → 取前 10
         scores = {f"net_{r['idx']:03d}": r["score"] for r in results}
@@ -569,7 +638,8 @@ class Trainer(QObject):
         self.generation = gen + 1
         meta = {
             "generation": self.generation,
-            "lesson": self._lesson_id,
+            "lesson": self.lesson_ids[0] if self.lesson_ids else None,
+            "lessons": self.lesson_ids,
             "prev_best": best, "prev_mean": mean, "prev_hit_count": hit_count,
             "duration_s": round(time.time() - t_gen, 1),
             "population": meta_list,
@@ -578,6 +648,7 @@ class Trainer(QObject):
             "score_std": round(score_std, 6),
             "mutation_boost": mutation_boost,
             "results": {f"net_{r['idx']:03d}": r for r in results},
+            "lesson_results": {f"net_{r['idx']:03d}": r["per_lesson"] for r in results},
         }
         self.current_meta = meta
         self._save_population()
@@ -585,7 +656,7 @@ class Trainer(QObject):
             json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         self._log(f"第 {gen+1} 代完成，已演化到第 {self.generation} 代并保存。")
         self.sig_generation_done.emit(meta)
-        write_lock(self.generation, self.target_gen, "running")
+        write_lock(self.generation, self.target_gen, "running", self.lesson_ids)
 
         if self.target_gen is not None and self.generation >= self.target_gen:
             self._log(f"[完成] 已达到目标代数 {self.target_gen}，本次训练结束。")
