@@ -14,14 +14,16 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QImage, QPixmap, QPainter, QPen, QColor
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem, QPlainTextEdit,
     QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar, QStackedWidget,
     QSplitter, QAbstractItemView, QMessageBox, QComboBox, QInputDialog,
+    QDoubleSpinBox, QSpinBox, QFormLayout,
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
+import numpy as np
 
 import Simulator
 import Trainer as TrainerMod
@@ -144,6 +146,319 @@ class ReplayWindow(QMainWindow):
         super().closeEvent(e)
 
 
+# ===================== 课程编辑器 =====================
+
+class LessonEditorWindow(QMainWindow):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("课程编辑器")
+        self.resize(980, 780)
+        self.class_dir = DATA_DIR / "class"
+        self.class_dir.mkdir(parents=True, exist_ok=True)
+        self._score_mod = TrainerMod._load_main_module("drn_score_editor", "score.py")
+        self.steps = []
+        self.current = -1
+        self._updating = False
+        self._scale = 0.62
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QHBoxLayout(central)
+
+        left = QVBoxLayout()
+        pick = QHBoxLayout()
+        self.lesson_box = QComboBox()
+        self.lesson_box.currentTextChanged.connect(self.load_lesson)
+        pick.addWidget(self.lesson_box, 1)
+        b_new = QPushButton("新建")
+        b_new.clicked.connect(self.new_lesson)
+        b_del = QPushButton("删除")
+        b_del.clicked.connect(self.delete_lesson)
+        pick.addWidget(b_new)
+        pick.addWidget(b_del)
+        left.addLayout(pick)
+
+        self.step_list = QListWidget()
+        self.step_list.currentRowChanged.connect(self.on_select)
+        left.addWidget(self.step_list, 1)
+
+        row1 = QHBoxLayout()
+        b_add = QPushButton("＋ 添加步骤")
+        b_add.clicked.connect(self.add_step)
+        b_rm = QPushButton("－ 删除步骤")
+        b_rm.clicked.connect(self.del_step)
+        row1.addWidget(b_add)
+        row1.addWidget(b_rm)
+        left.addLayout(row1)
+        row2 = QHBoxLayout()
+        b_up = QPushButton("↑ 上移")
+        b_up.clicked.connect(lambda: self.move_step(-1))
+        b_down = QPushButton("↓ 下移")
+        b_down.clicked.connect(lambda: self.move_step(1))
+        row2.addWidget(b_up)
+        row2.addWidget(b_down)
+        left.addLayout(row2)
+        root.addLayout(left, 0)
+
+        right = QVBoxLayout()
+        form = QFormLayout()
+        self.type_box = QComboBox()
+        self.type_box.addItems(["move_view", "mouse_move", "click"])
+        self.type_box.currentTextChanged.connect(self.on_type)
+        form.addRow("类型", self.type_box)
+        self.x_spin = QDoubleSpinBox()
+        self.x_spin.setRange(0, 390)
+        self.x_spin.setDecimals(2)
+        form.addRow("x（0~390）", self.x_spin)
+        self.y_spin = QDoubleSpinBox()
+        self.y_spin.setRange(0, 844)
+        self.y_spin.setDecimals(2)
+        form.addRow("y（0~844，视野 96~748）", self.y_spin)
+        self.tol_spin = QDoubleSpinBox()
+        self.tol_spin.setRange(1, 400)
+        self.tol_spin.setDecimals(1)
+        form.addRow("容差 tol（像素）", self.tol_spin)
+        self.tick_spin = QSpinBox()
+        self.tick_spin.setRange(1, 500)
+        form.addRow("时间窗 ticks", self.tick_spin)
+        self.weight_spin = QDoubleSpinBox()
+        self.weight_spin.setRange(0.1, 20)
+        self.weight_spin.setDecimals(1)
+        self.weight_spin.setSingleStep(0.5)
+        form.addRow("权重 weight", self.weight_spin)
+        for w in (self.x_spin, self.y_spin, self.tol_spin, self.tick_spin, self.weight_spin):
+            w.valueChanged.connect(self.form_changed)
+        right.addLayout(form)
+
+        self.preview = QLabel()
+        self.preview.setAlignment(Qt.AlignCenter)
+        right.addWidget(self.preview, 1)
+        self.ticks_label = QLabel()
+        self.ticks_label.setStyleSheet(f"color:{MUTED}; font-size:12px;")
+        right.addWidget(self.ticks_label)
+        b_save = QPushButton("💾 保存课程")
+        b_save.setStyleSheet(f"background:#1c1633; border:2px solid {ACCENT}; font-size:16px;")
+        b_save.clicked.connect(self.save)
+        right.addWidget(b_save)
+        root.addLayout(right, 1)
+
+        self._base_pixmap = self._make_base()
+        self.refresh_lessons()
+
+    def _make_base(self):
+        screen_path = TRAIN_DIR / "screen.npy"
+        if screen_path.exists():
+            arr = np.load(screen_path).astype(np.uint8)
+        else:
+            arr = np.full((844, 390), 18, dtype=np.uint8)
+        img = QImage(arr.data, arr.shape[1], arr.shape[0],
+                     arr.strides[0], QImage.Format_Grayscale8).copy()
+        return QPixmap.fromImage(img).scaled(
+            int(390 * self._scale), int(844 * self._scale),
+            Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+
+    def refresh_lessons(self, select=None):
+        self.lesson_box.blockSignals(True)
+        self.lesson_box.clear()
+        names = sorted(p.name for p in self.class_dir.glob("class-*.json"))
+        self.lesson_box.addItems(names)
+        target = select or ("class-1.json" if "class-1.json" in names else (names[0] if names else None))
+        if target:
+            self.lesson_box.setCurrentText(target)
+        self.lesson_box.blockSignals(False)
+        if target:
+            self.load_lesson(target)
+        else:
+            self.steps = []
+            self.refresh_steps()
+
+    def load_lesson(self, name):
+        if not name:
+            return
+        path = self.class_dir / name
+        try:
+            self.steps = self._score_mod.load_lesson(path)
+        except Exception as e:
+            QMessageBox.critical(self, "课程读取失败", f"{name}\n{e}")
+            self.steps = []
+        self.current = 0 if self.steps else -1
+        self.refresh_steps()
+
+    def _step_text(self, i, st):
+        pos = f"y={st['y']:g}" if st["type"] == "move_view" else f"({st['x']:g}, {st['y']:g})"
+        return (f"{i+1}. {st['type']}  {pos}  tol={st['tol']:g}  "
+                f"ticks={st['ticks']}  w={st['weight']:g}")
+
+    def refresh_steps(self):
+        self.step_list.blockSignals(True)
+        self.step_list.clear()
+        for i, st in enumerate(self.steps):
+            self.step_list.addItem(self._step_text(i, st))
+        self.step_list.blockSignals(False)
+        if 0 <= self.current < len(self.steps):
+            self.step_list.setCurrentRow(self.current)
+        else:
+            self.on_select(-1)
+        self.update_ticks_label()
+        self.update_preview()
+
+    def on_select(self, row):
+        self.current = row
+        self._updating = True
+        if 0 <= row < len(self.steps):
+            st = self.steps[row]
+            self.type_box.setCurrentText(st["type"])
+            self.x_spin.setValue(st.get("x", 0.0))
+            self.y_spin.setValue(st["y"])
+            self.tol_spin.setValue(st["tol"])
+            self.tick_spin.setValue(st["ticks"])
+            self.weight_spin.setValue(st["weight"])
+        self._updating = False
+        self._update_x_enabled()
+        self.update_preview()
+
+    def _update_x_enabled(self):
+        self.x_spin.setEnabled(self.type_box.currentText() != "move_view")
+
+    def on_type(self, kind):
+        self._update_x_enabled()
+        if self._updating or not (0 <= self.current < len(self.steps)):
+            return
+        st = self.steps[self.current]
+        st["type"] = kind
+        if kind != "move_view" and "x" not in st:
+            st["x"] = 195.0
+        self._sync_row()
+
+    def form_changed(self):
+        if self._updating or not (0 <= self.current < len(self.steps)):
+            return
+        st = self.steps[self.current]
+        st["type"] = self.type_box.currentText()
+        st["y"] = float(self.y_spin.value())
+        if st["type"] != "move_view":
+            st["x"] = float(self.x_spin.value())
+        else:
+            st.pop("x", None)
+        st["tol"] = float(self.tol_spin.value())
+        st["ticks"] = int(self.tick_spin.value())
+        st["weight"] = float(self.weight_spin.value())
+        self._sync_row()
+
+    def _sync_row(self):
+        i = self.current
+        self.step_list.item(i).setText(self._step_text(i, self.steps[i]))
+        self.update_ticks_label()
+        self.update_preview()
+
+    def add_step(self):
+        self.steps.append({"type": "mouse_move", "x": 195.0, "y": 422.0,
+                           "tol": 20.0, "ticks": 10, "weight": 1.0})
+        self.current = len(self.steps) - 1
+        self.refresh_steps()
+
+    def del_step(self):
+        if 0 <= self.current < len(self.steps):
+            self.steps.pop(self.current)
+            self.current = min(self.current, len(self.steps) - 1)
+            self.refresh_steps()
+
+    def move_step(self, delta):
+        i = self.current
+        j = i + delta
+        if 0 <= i < len(self.steps) and 0 <= j < len(self.steps):
+            self.steps[i], self.steps[j] = self.steps[j], self.steps[i]
+            self.current = j
+            self.refresh_steps()
+
+    def update_ticks_label(self):
+        total = 0
+        parts = []
+        for i, st in enumerate(self.steps):
+            parts.append(f"{i+1}:{total}-{total + st['ticks'] - 1}")
+            total += st["ticks"]
+        color = "#ff6b6b" if total > 50 else MUTED
+        self.ticks_label.setStyleSheet(f"color:{color}; font-size:12px;")
+        self.ticks_label.setText(
+            f"时间窗  {'  |  '.join(parts)}\n合计 {total} ticks（每次评估 50 tick）"
+            + ("  ⚠ 超出部分不会被评审" if total > 50 else ""))
+
+    def update_preview(self):
+        pm = self._base_pixmap.copy()
+        s = self._scale
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(QColor("#666677"), 1, Qt.DashLine))
+        p.drawRect(0, int((422 - 96) * s), int(390 * s), int(192 * s))
+        colors = {"move_view": "#7c5cff", "mouse_move": "#3ec6ff", "click": "#5cff9d"}
+        for i, st in enumerate(self.steps):
+            cur = (i == self.current)
+            p.setPen(QPen(QColor(colors[st["type"]]), 3 if cur else 1))
+            if st["type"] == "move_view":
+                y = st["y"]
+                p.drawRect(0, int((y - 96) * s), int(390 * s), int(192 * s))
+                p.drawLine(0, int(y * s), int(390 * s), int(y * s))
+                p.drawText(6, max(12, int(y * s) - 4), f"{i+1}. view {y:g}")
+            else:
+                cx, cy, r = st["x"] * s, st["y"] * s, max(3.0, st["tol"] * s)
+                p.drawEllipse(int(cx - r), int(cy - r), int(2 * r), int(2 * r))
+                p.drawLine(int(cx - 6), int(cy), int(cx + 6), int(cy))
+                p.drawLine(int(cx), int(cy - 6), int(cx), int(cy + 6))
+                p.drawText(int(cx + r) + 3, int(cy) - 3, f"{i+1}")
+        p.end()
+        self.preview.setPixmap(pm)
+
+    def new_lesson(self):
+        n, ok = QInputDialog.getInt(self, "新建课程", "课程编号：", 2, 1, 999)
+        if not ok:
+            return
+        name = f"class-{n}.json"
+        path = self.class_dir / name
+        if path.exists():
+            QMessageBox.warning(self, "已存在", f"{name} 已存在。")
+            return
+        path.write_text(json.dumps(
+            [{"type": "move_view", "y": 422, "tol": 40, "ticks": 10, "weight": 1}],
+            ensure_ascii=False, indent=4), encoding="utf-8")
+        self.refresh_lessons(select=name)
+
+    def delete_lesson(self):
+        name = self.lesson_box.currentText()
+        if not name:
+            return
+        if QMessageBox.question(self, "删除课程", f"确定删除 {name}？") != QMessageBox.Yes:
+            return
+        (self.class_dir / name).unlink(missing_ok=True)
+        self.refresh_lessons()
+
+    def save(self):
+        name = self.lesson_box.currentText()
+        if not name:
+            return
+        if not self.steps:
+            QMessageBox.warning(self, "无法保存", "课程至少需要一个步骤。")
+            return
+        for i, st in enumerate(self.steps):
+            if st["type"] == "move_view" and not (96 <= st["y"] <= 748):
+                QMessageBox.warning(self, "参数超出范围",
+                                    f"第 {i+1} 步 move_view 的 y 必须在 96~748。")
+                return
+        path = self.class_dir / name
+        ordered = []
+        for st in self.steps:
+            d = {"type": st["type"]}
+            if st["type"] != "move_view":
+                d["x"] = st["x"]
+            d["y"] = st["y"]
+            d["tol"] = st["tol"]
+            d["ticks"] = st["ticks"]
+            d["weight"] = st["weight"]
+            ordered.append(d)
+        path.write_text(json.dumps(ordered, ensure_ascii=False, indent=4),
+                        encoding="utf-8")
+        self.statusBar().showMessage(f"已保存 {path}（下次开始训练时生效）", 8000)
+
+
 # ===================== 控制台主窗口 =====================
 
 class ConsoleWindow(QMainWindow):
@@ -210,8 +525,18 @@ class ConsoleWindow(QMainWindow):
         b_run.clicked.connect(self.goto_run)
         btns.addWidget(b_train); btns.addWidget(b_run)
         v.addLayout(btns)
+        b_lesson = QPushButton("📝  课程编辑器（可视化编辑 data/class/class-N.json）")
+        b_lesson.setStyleSheet("font-size:14px; background:#141a16; border:1px solid #2a4a3a;")
+        b_lesson.clicked.connect(self.open_lesson_editor)
+        v.addWidget(b_lesson)
         v.addStretch()
         return page
+
+    def open_lesson_editor(self):
+        self._lesson_editor = LessonEditorWindow(self)
+        self._lesson_editor.show()
+        self._lesson_editor.raise_()
+        self._lesson_editor.activateWindow()
 
     def _build_run_page(self):
         page = QWidget()

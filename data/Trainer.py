@@ -277,10 +277,21 @@ class Trainer(QObject):
         self.current_meta = {}          # 最新一代元数据
         self.live_gen = None            # 正在评估的代
         self.live_results = {}          # {idx: {score, clicks, hit_w}} 实时结果
-        self._score_fn = _load_main_module("drn_score", "score.py").score
+        self._score_mod = _load_main_module("drn_score", "score.py")
+        self._score_fn = self._score_mod.score
         self._rank_fn = _load_main_module("drn_rank", "rank.py").rank
         self._mutation_fn = _load_main_module("drn_mutation", "mutation.py").mutation
         self._data_into_fn = _load_main_module("drn_data_into", "data_into.py").data_into
+        self._lesson_id = None
+        self._lesson = None
+        self._lesson_error = None
+        lesson_path = DATA_DIR / "class" / "class-1.json"
+        if lesson_path.exists():
+            try:
+                self._lesson = self._score_mod.load_lesson(lesson_path)
+                self._lesson_id = "class-1"
+            except Exception as e:
+                self._lesson_error = str(e)
 
     # ---- 生命周期 ----
 
@@ -389,7 +400,13 @@ class Trainer(QObject):
 
     def _run(self):
         try:
+            if self._lesson is None:
+                reason = self._lesson_error or "缺少 data/class/class-1.json"
+                self._log(f"[错误] 课程未加载（{reason}），无法训练。")
+                return
             self._load_or_init()
+            seq = " → ".join(st["type"] for st in self._lesson)
+            self._log(f"课程：{self._lesson_id}（{len(self._lesson)} 步：{seq}）")
             write_lock(self.generation, self.target_gen, "running")
             while not self._stop.is_set() and not self._done:
                 self._run_generation()
@@ -425,11 +442,11 @@ class Trainer(QObject):
             traj = Simulator.evaluate(
                 None, None, self.screen, ticks=TICKS_PER_RUN,
                 cursor_sprite=self.cursor_sprite, compact=self.population[i])
-            s = self._score_fn(traj["mouse_positions"], traj["click_positions"])
+            report = self._score_mod.score_lesson(self._lesson, traj["frames"])
+            s = report["score"]
+            steps_done = sum(1 for st in report["steps"] if st["done"])
             clicks = traj["click_positions"]
-            hit_w = any(
-                43.5 <= x < 77.0 and 676.0 <= y < 712.0 for x, y in clicks
-            )
+            hit_w = any(st["type"] == "click" and st["done"] for st in report["steps"])
             # 保存回放（供控制台“观看”），按代归档避免进化后对错号
             replay_dir = TRAIN_DIR / "replays" / f"gen_{gen}"
             replay_dir.mkdir(parents=True, exist_ok=True)
@@ -438,6 +455,7 @@ class Trainer(QObject):
             results.append({
                 "idx": i, "score": float(s),
                 "clicks": len(clicks), "hit_w": bool(hit_w),
+                "steps_done": steps_done,
                 "last_pos": traj["mouse_positions"][-1],
             })
             self.live_results[i] = {
@@ -447,7 +465,8 @@ class Trainer(QObject):
             time.sleep(0.005)  # 每个网络之间让出 CPU/GIL，避免界面卡死
             if (i + 1) % 10 == 0 or i == 0:
                 self._log(f"  评估 net_{i:03d}  score={s:+.4f}  "
-                          f"clicks={len(clicks)}  hit_W={'YES' if hit_w else 'no'}")
+                          f"clicks={len(clicks)}  hit={'YES' if hit_w else 'no'}"
+                          f"  steps={steps_done}/{len(self._lesson)}")
 
         # 2) 打分 → 排序 → 取前 10
         scores = {f"net_{r['idx']:03d}": r["score"] for r in results}
@@ -521,14 +540,14 @@ class Trainer(QObject):
             r = results[i]
             tag = "  ◄ 存活" if name in survivors else ""
             self._log(f"  #{pos+1:>3}  {name}  score={r['score']:+.4f}  "
-                      f"clicks={r['clicks']}  hit_W={'YES' if r['hit_w'] else 'no '}"
+                      f"clicks={r['clicks']}  hit={'YES' if r['hit_w'] else 'no '}"
                       f"  last=({r['last_pos'][0]},{r['last_pos'][1]}){tag}")
         self._log("---- 存活的前 10 个网络 ----")
         for name in survivors:
             self._log(f"  {name}  score={scores[name]:+.4f}  "
                       f"→ 将产生 {CHILDREN_PER_SURVIVOR} 个子代，变异率 {effective_rates}")
         self._log(f"[统计] 最佳={best:+.4f}  平均={mean:+.4f}  "
-                  f"命中 W 键={hit_count}/{POPULATION}  耗时={time.time()-t_gen:.1f}s")
+                  f"命中目标={hit_count}/{POPULATION}  耗时={time.time()-t_gen:.1f}s")
 
         # 5) 结束训练 → 放弃本代（不写数据库）
         if self._stop.is_set():
@@ -540,6 +559,7 @@ class Trainer(QObject):
         self.generation = gen + 1
         meta = {
             "generation": self.generation,
+            "lesson": self._lesson_id,
             "prev_best": best, "prev_mean": mean, "prev_hit_count": hit_count,
             "duration_s": round(time.time() - t_gen, 1),
             "population": meta_list,

@@ -1,16 +1,25 @@
 [
     {
-        "type":"mouse_move",
-        "x":0,
-        "y":0
+        "type": "move_view",
+        "y": 694,
+        "tol": 40,
+        "ticks": 12,
+        "weight": 1
     },
     {
-        "type":"click",
-        "x":0,
-        "y":0
+        "type": "mouse_move",
+        "x": 60.25,
+        "y": 694,
+        "tol": 20,
+        "ticks": 18,
+        "weight": 1
     },
     {
-        "type":"move_view",
-        "y":0
+        "type": "click",
+        "x": 60.25,
+        "y": 694,
+        "tol": 17,
+        "ticks": 20,
+        "weight": 2
     }
 ]

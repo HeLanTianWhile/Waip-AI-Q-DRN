@@ -10,3 +10,8 @@ Waip Artificial intelligence.main.Delivery Relay Network.quantize-Delivery Relay
 - 屏幕尺寸：390 × 844（固定）
 - 视野采样：390 × 192（滑动的黄金视野）
 - 运行速率：5.4 tick/s
+一个科研方向的人工智能项目
+DRN的继承项目
+开发多模态模型
+采用遗传算法进行优化与训练
+有望实现人类水平的智能体
