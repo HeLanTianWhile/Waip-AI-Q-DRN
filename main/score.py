@@ -37,6 +37,11 @@ def load_lesson(path):
 
 
 def _step_error(step, frames, indexes):
+    """返回 (best_err, hit_tick, n_clicks, n_wrong)。
+
+    click 步只看真实发生点击的那些 tick 的位置，所以“点了没点、点在哪、点了几次”
+    都会反映到得分里；没点过则用光标最近距离 +50 作为惩罚。
+    """
     kind = step["type"]
     best = math.inf
     hit_tick = None
@@ -47,27 +52,37 @@ def _step_error(step, frames, indexes):
                 best = err
             if hit_tick is None and err <= step["tol"]:
                 hit_tick = i
-        return best, hit_tick
+        return best, hit_tick, 0, 0
+
     cursor_errs = []
+    click_errs = []
+    n_clicks = 0
+    n_wrong = 0
     for i in indexes:
         err = math.hypot(frames[i]["cx"] - step["x"], frames[i]["cy"] - step["y"])
         cursor_errs.append((i, err))
-        if kind == "mouse_move":
-            if err < best:
-                best = err
-            if hit_tick is None and err <= step["tol"]:
-                hit_tick = i
-    if kind == "mouse_move":
-        return best, hit_tick
-    for i, err in cursor_errs:
         if frames[i]["click"]:
+            n_clicks += 1
+            click_errs.append((i, err))
+            if err <= step["tol"]:
+                if hit_tick is None:
+                    hit_tick = i
+            else:
+                n_wrong += 1
+
+    if kind == "mouse_move":
+        for i, err in cursor_errs:
             if err < best:
                 best = err
             if hit_tick is None and err <= step["tol"]:
                 hit_tick = i
-    if best is math.inf and cursor_errs:
+        return best, hit_tick, 0, 0
+
+    if click_errs:
+        best = min(err for _i, err in click_errs)
+    elif cursor_errs:
         best = min(err for _i, err in cursor_errs) + 50.0
-    return best, hit_tick
+    return best, hit_tick, n_clicks, n_wrong
 
 
 def score_lesson(steps, frames):
@@ -79,12 +94,15 @@ def score_lesson(steps, frames):
     for step in steps:
         end = min(len(frames), start + step["ticks"])
         indexes = range(start, end)
-        best, hit_tick = _step_error(step, frames, indexes)
+        best, hit_tick, n_clicks, n_wrong = _step_error(step, frames, indexes)
         done = prev_done and hit_tick is not None
         prev_done = done
         norm = VIEW_RANGE if step["type"] == "move_view" else D
         progress = 0.0 if not math.isfinite(best) else max(0.0, 1.0 - best / norm)
         value = 1.0 if done else 0.9 * progress
+        # 乱点惩罚：容差外的每一次点击都按比例扣分，避免“狂点鼠标”和“不点”同分
+        if step["type"] == "click" and n_wrong:
+            value *= 1.0 / (1.0 + 0.25 * n_wrong)
         weighted += value * step["weight"]
         total_weight += step["weight"]
         results.append({
@@ -92,6 +110,8 @@ def score_lesson(steps, frames):
             "done": done,
             "tick": hit_tick,
             "error": None if not math.isfinite(best) else round(best, 3),
+            "clicks": n_clicks,
+            "wrong_clicks": n_wrong,
             "score": round(value, 6),
         })
         start = end

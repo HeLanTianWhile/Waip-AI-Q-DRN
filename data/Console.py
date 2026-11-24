@@ -1162,10 +1162,17 @@ class ConsoleWindow(QMainWindow):
             self.net_table.resizeRowsToContents()
         sb.setValue(scroll_pos)
 
-    def _refresh_watch_lessons(self, meta):
+    def _lessons_for_watch(self, meta):
+        """观看用课程列表：优先元数据；第一代训练中元数据还没写，就回退到 trainer 当前课程。"""
         lessons = list(meta.get("lessons") or [])
         if not lessons and meta.get("lesson"):
             lessons = [meta["lesson"]]
+        if not lessons and self.trainer is not None:
+            lessons = list(getattr(self.trainer, "lesson_ids", []) or [])
+        return lessons
+
+    def _refresh_watch_lessons(self, meta):
+        lessons = self._lessons_for_watch(meta)
         current = [self.watch_lesson_box.itemText(i)
                    for i in range(self.watch_lesson_box.count())]
         if current != lessons:
@@ -1182,7 +1189,7 @@ class ConsoleWindow(QMainWindow):
         """返回 (replay_gen, replay_idx, score, hit_w, lesson_id)；未推演则前两项为 None。"""
         trainer = self.trainer
         meta = (trainer.current_meta if trainer is not None else None) or self._pending_meta or {}
-        lessons = meta.get("lessons") or ([meta["lesson"]] if meta.get("lesson") else [])
+        lessons = self._lessons_for_watch(meta)
         lesson_id = self.watch_lesson_box.currentText() or (lessons[0] if lessons else None)
         live = (getattr(trainer, "live_results", None) if trainer is not None else None) or {}
         lr = live.get(row)
@@ -1204,22 +1211,25 @@ class ConsoleWindow(QMainWindow):
         self._open_replay(rg, ri, f"net_{row:03d}", score, bool(hit), lesson_id)
 
     def _open_replay(self, gen, idx, name, score, hit_w, lesson_id=None):
+        base = TRAIN_DIR / "replays" / f"gen_{gen}"
         candidates = []
         if lesson_id:
-            candidates.append(
-                TRAIN_DIR / "replays" / f"gen_{gen}" / lesson_id / f"net_{idx:03d}.json")
-        candidates.append(TRAIN_DIR / "replays" / f"gen_{gen}" / f"net_{idx:03d}.json")
+            candidates.append(base / lesson_id / f"net_{idx:03d}.json")
+        candidates.append(base / f"net_{idx:03d}.json")
+        # 兜底：不管当前下拉选的是哪个课程，只要该代下任一课程有这份回放就用它
+        candidates.extend(sorted(base.glob(f"*/net_{idx:03d}.json")))
         path = next((p for p in candidates if p.exists()), None)
         if path is None:
-            shown = candidates[0] if candidates else "(无)"
-            QMessageBox.warning(self, "无回放", f"找不到回放文件：{shown}")
+            QMessageBox.warning(
+                self, "无回放", f"找不到回放文件：{base / (lesson_id or '') / f'net_{idx:03d}.json'}")
             return
         try:
             traj = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
             QMessageBox.warning(self, "读取失败", str(e))
             return
-        title = f"{name}" + (f" · {lesson_id}" if lesson_id else "")
+        shown_lesson = path.parent.name if path.parent != base else lesson_id
+        title = f"{name}" + (f" · {shown_lesson}" if shown_lesson and path.parent != base else "")
         w = ReplayWindow(traj, title, score, hit_w, self)
         self._replay_windows.append(w)
         w.show()
