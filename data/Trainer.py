@@ -293,6 +293,15 @@ class Trainer(QObject):
             except Exception as e:
                 self._lesson_error = str(e)
 
+    @property
+    def eval_ticks(self):
+        """评估 tick 数由课程步骤的时间窗合计决定，不再固定 50。"""
+        if self._lesson:
+            total = sum(st["ticks"] for st in self._lesson)
+            if total > 0:
+                return total
+        return TICKS_PER_RUN
+
     # ---- 生命周期 ----
 
     def start(self):
@@ -428,8 +437,9 @@ class Trainer(QObject):
         t_gen = time.time()
         self._log("=" * 64)
         self._log(f"===== 第 {gen + 1} 代开始 =====")
+        ticks = self.eval_ticks
         self._log(f"种群 {POPULATION} | 存活 {SURVIVORS} | "
-                  f"每存活 {CHILDREN_PER_SURVIVOR} 子代 | 每网络 {TICKS_PER_RUN} tick")
+                  f"每存活 {CHILDREN_PER_SURVIVOR} 子代 | 每网络 {ticks} tick")
 
         # 1) 评估全部 100 个网络
         results = []
@@ -440,7 +450,7 @@ class Trainer(QObject):
                 self._log(f"[已结束] 第 {gen + 1} 代评估被中断，本代不写入数据库。")
                 return
             traj = Simulator.evaluate(
-                None, None, self.screen, ticks=TICKS_PER_RUN,
+                None, None, self.screen, ticks=ticks,
                 cursor_sprite=self.cursor_sprite, compact=self.population[i])
             report = self._score_mod.score_lesson(self._lesson, traj["frames"])
             s = report["score"]

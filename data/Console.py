@@ -3,8 +3,8 @@
 Waip AI Q-DRN 控制台（启动弹窗）。
 
 终端启动后不再直接运行，而是弹出本控制台，提供两个入口：
-  · 训练 —— 启动 GA 训练（第一课：点击 W 键），面板内可实时查看训练日志、
-            管理当前代网络、并“观看”任一存活网络的 50 tick 点击回放。
+  · 训练 —— 启动 GA 训练（课程由 data/class/class-N.json 定义），面板内可实时
+            查看训练日志、管理当前代网络、并“观看”任一回放的点击过程。
   · 运行模型 —— 选择一个已训练的意识体，以旧方式打开 ChatUI 工作区观看运行。
 """
 
@@ -56,7 +56,7 @@ def _style():
 # ===================== 回放窗口 =====================
 
 class ReplayWindow(QMainWindow):
-    """播放某个网络 50 tick 的点击回放。"""
+    """播放某个网络的点击回放（帧数由课程时间窗合计决定）。"""
 
     def __init__(self, traj, net_name, score, hit_w, parent=None):
         super().__init__(parent)
@@ -377,11 +377,11 @@ class LessonEditorWindow(QMainWindow):
         for i, st in enumerate(self.steps):
             parts.append(f"{i+1}:{total}-{total + st['ticks'] - 1}")
             total += st["ticks"]
-        color = "#ff6b6b" if total > 50 else MUTED
+        color = "#ff6b6b" if total < 1 else MUTED
         self.ticks_label.setStyleSheet(f"color:{color}; font-size:12px;")
         self.ticks_label.setText(
-            f"时间窗  {'  |  '.join(parts)}\n合计 {total} ticks（每次评估 50 tick）"
-            + ("  ⚠ 超出部分不会被评审" if total > 50 else ""))
+            f"时间窗  {'  |  '.join(parts)}\n"
+            f"合计 {total} ticks（每次评估就跑 {total} tick）")
 
     def update_preview(self):
         pm = self._base_pixmap.copy()
