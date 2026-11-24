@@ -91,11 +91,15 @@ def score_lesson(steps, frames):
     weighted = 0.0
     total_weight = 0.0
     prev_done = True
+    click_spans = []
     for step in steps:
         end = min(len(frames), start + step["ticks"])
+        if step["type"] == "click":
+            click_spans.append((start, end))
+        reachable = prev_done          # 前一步失败后，这一步还没轮得到
         indexes = range(start, end)
         best, hit_tick, n_clicks, n_wrong = _step_error(step, frames, indexes)
-        done = prev_done and hit_tick is not None
+        done = reachable and hit_tick is not None
         prev_done = done
         norm = VIEW_RANGE if step["type"] == "move_view" else D
         progress = 0.0 if not math.isfinite(best) else max(0.0, 1.0 - best / norm)
@@ -103,6 +107,9 @@ def score_lesson(steps, frames):
         # 乱点惩罚：容差外的每一次点击都按比例扣分，避免“狂点鼠标”和“不点”同分
         if step["type"] == "click" and n_wrong:
             value *= 1.0 / (1.0 + 0.25 * n_wrong)
+        if not reachable:
+            # 前序步骤没完成：只保留 1/4 的引导信号，避免“跳步”白拿高分，同时仍给进化留梯度
+            value *= 0.25
         weighted += value * step["weight"]
         total_weight += step["weight"]
         results.append({
@@ -115,10 +122,21 @@ def score_lesson(steps, frames):
             "score": round(value, 6),
         })
         start = end
+
+    # 非点击步骤时间窗里的点击＝乱点，整体扣分；这样“点了几次”在任何课程里都会影响得分
+    def _in_click_span(i):
+        return any(a <= i < b for a, b in click_spans)
+
+    n_spurious = sum(1 for i, f in enumerate(frames)
+                     if f["click"] and not _in_click_span(i))
+    total = weighted / total_weight if total_weight else 0.0
+    if n_spurious:
+        total *= 1.0 / (1.0 + 0.15 * n_spurious)
     return {
-        "score": weighted / total_weight if total_weight else 0.0,
+        "score": total,
         "steps": results,
         "completed": all(r["done"] for r in results),
+        "spurious_clicks": n_spurious,
     }
 
 

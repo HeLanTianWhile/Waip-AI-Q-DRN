@@ -14,7 +14,7 @@
         "weight": 2.0
     },
     {
-        "type": "mouse_move",
+        "type": "click",
         "x": 280.0,
         "y": 780.0,
         "tol": 20.0,
@@ -22,7 +22,7 @@
         "weight": 3.0
     },
     {
-        "type": "mouse_move",
+        "type": "click",
         "x": 290.0,
         "y": 701.0,
         "tol": 20.0,
@@ -30,7 +30,7 @@
         "weight": 3.0
     },
     {
-        "type": "mouse_move",
+        "type": "click",
         "x": 70.0,
         "y": 607.0,
         "tol": 20.0,
@@ -38,7 +38,7 @@
         "weight": 3.0
     },
     {
-        "type": "mouse_move",
+        "type": "click",
         "x": 360.0,
         "y": 650.0,
         "tol": 20.0,
