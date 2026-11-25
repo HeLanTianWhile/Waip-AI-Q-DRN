@@ -97,12 +97,12 @@ def _load_main_module(name, filename):
 
 
 # ---------- 网络紧凑存档（比 JSON 小数十倍，读写快） ----------
-# 内存中的种群也只保存紧凑数组：(biases, roles, ipidx, a, b, w)。
+# 内存中的种群也只保存紧凑数组：(biases, roles, ipidx, a, b, w, d)。
 # 一份完整字典约 180MB，100 份就是十几 GB（旧实现因此 MemoryError）；
 # 紧凑数组每份约 6MB，只有在调用 main/mutation.py 时才临时还原字典。
 
 def to_compact(config_db, synapses_db):
-    """字典数据库 → (biases, roles, ipidx, a, b, w)。"""
+    """字典数据库 → (biases, roles, ipidx, a, b, w, d)。d: 1=双向 0=单向。"""
     ids = sorted(config_db.keys(), key=lambda k: int(k))
     id_to_idx = {nid: i for i, nid in enumerate(ids)}
     biases = np.empty(len(ids), dtype=np.float64)
@@ -114,7 +114,7 @@ def to_compact(config_db, synapses_db):
         ip = cfg.get("IP", ["Normal", i])
         roles[i] = ROLE_CODE.get(ip[0], 3)
         ipidx[i] = int(ip[1]) if isinstance(ip[1], int) else i
-    a, b, w = [], [], []
+    a, b, w, d = [], [], [], []
     for syn in synapses_db.values():
         ct = syn.get("Connection Target")
         if not isinstance(ct, (list, tuple)) or len(ct) != 2:
@@ -124,14 +124,19 @@ def to_compact(config_db, synapses_db):
             continue
         a.append(id_to_idx[x]); b.append(id_to_idx[y])
         w.append(float(syn.get("Weight", 0.0)))
+        d.append(0 if syn.get("Type") == "unidirectional synapse" else 1)
     return (biases, roles, ipidx,
             np.asarray(a, dtype=np.int64), np.asarray(b, dtype=np.int64),
-            np.asarray(w, dtype=np.float64))
+            np.asarray(w, dtype=np.float64), np.asarray(d, dtype=np.int8))
 
 
 def to_dicts(compact):
     """紧凑数组 → (config_db, synapses_db)，键名规则与旧版一致。"""
-    biases, roles, ipidx, a, b, w = compact
+    if len(compact) == 6:
+        biases, roles, ipidx, a, b, w = compact
+        d = np.ones(a.size, dtype=np.int8)
+    else:
+        biases, roles, ipidx, a, b, w, d = compact
     n = biases.size
     config_db, synapses_db = {}, {}
     for i in range(n):
@@ -142,6 +147,7 @@ def to_dicts(compact):
         synapses_db[f"{k + 1:04d}"] = {
             "Weight": float(w[k]),
             "Connection Target": [f"{int(a[k]) + 1:04d}", f"{int(b[k]) + 1:04d}"],
+            "Type": "bidirectional synapse" if int(d[k]) else "unidirectional synapse",
         }
     return config_db, synapses_db
 
@@ -153,11 +159,15 @@ def copy_compact(compact):
 def save_compact(net_dir, compact):
     net_dir = Path(net_dir)
     net_dir.mkdir(parents=True, exist_ok=True)
-    biases, roles, ipidx, a, b, w = compact
+    if len(compact) == 6:
+        biases, roles, ipidx, a, b, w = compact
+        d = np.ones(a.size, dtype=np.int8)
+    else:
+        biases, roles, ipidx, a, b, w, d = compact
     np.save(net_dir / "biases.npy", biases)
     np.save(net_dir / "roles.npy", roles)
     np.save(net_dir / "ipidx.npy", ipidx)
-    np.savez(net_dir / "synapses.npz", a=a, b=b, w=w)
+    np.savez(net_dir / "synapses.npz", a=a, b=b, w=w, d=d)
 
 
 def load_compact(net_dir):
@@ -167,7 +177,8 @@ def load_compact(net_dir):
     ipidx = np.load(net_dir / "ipidx.npy")
     with np.load(net_dir / "synapses.npz") as syn:
         a, b, w = syn["a"].copy(), syn["b"].copy(), syn["w"].copy()
-    return biases, roles, ipidx, a, b, w
+        d = syn["d"].copy() if "d" in syn else np.ones(a.size, dtype=np.int8)
+    return biases, roles, ipidx, a, b, w, d
 
 
 def save_network(net_dir, config_db, synapses_db):
@@ -281,6 +292,7 @@ class Trainer(QObject):
         self._score_mod = _load_main_module("drn_score", "score.py")
         self._score_fn = self._score_mod.score
         self._rank_fn = _load_main_module("drn_rank", "rank.py").rank
+        self._rank_unique_fn = _load_main_module("drn_rank_uniq", "rank.py").rank_unique
         self._mutation_fn = _load_main_module("drn_mutation", "mutation.py").mutation
         self._data_into_fn = _load_main_module("drn_data_into", "data_into.py").data_into
         self._lessons = []              # [(lesson_id, steps), ...]  支持同时训练多个课程
@@ -547,10 +559,20 @@ class Trainer(QObject):
                 self._log(f"  评估 net_{i:03d}  综合={s:+.4f}  clicks={total_clicks}  "
                           f"完成={'YES' if completed_all else 'no'}  [{detail}]")
 
-        # 2) 打分 → 排序 → 取前 10
+        # 2) 打分 → 排序 → 取前 10（同分只留一个，避免克隆模型长期霸榜）
         scores = {f"net_{r['idx']:03d}": r["score"] for r in results}
         ranked = self._rank_fn(scores, Top_N=POPULATION)         # 全部排序
-        survivors = ranked[:SURVIVORS]                             # 前 10
+        survivors = list(self._rank_unique_fn(scores, Top_N=SURVIVORS))
+        deduped = SURVIVORS - len(survivors)
+        if deduped > 0:
+            # 不同分的模型不足 10 个时，用后面剩下的补齐，保证种群规模不变
+            for name in ranked:
+                if len(survivors) >= SURVIVORS:
+                    break
+                if name not in survivors:
+                    survivors.append(name)
+            self._log(f"[去重] 前{SURVIVORS}名里有 {deduped} 个与别人同分，"
+                      f"已换成更靠后的不同分模型。")
         survivor_indices = [int(name.split("_")[1]) for name in survivors]
 
         # 2.5) 多样性检测：只看前 10 名得分；越趋同，变异率越高

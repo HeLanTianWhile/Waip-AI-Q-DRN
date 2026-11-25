@@ -39,8 +39,8 @@ def load_lesson(path):
 def _step_error(step, frames, indexes):
     """返回 (best_err, hit_tick, n_clicks, n_wrong)。
 
-    click 步只看真实发生点击的那些 tick 的位置，所以“点了没点、点在哪、点了几次”
-    都会反映到得分里；没点过则用光标最近距离 +50 作为惩罚。
+    click 步只看真实发生点击的那些 tick 的位置。“该点却没点”直接记 0，
+    保证任何一次点击都比不点更好，避免模型学会“放弃点击”。
     """
     kind = step["type"]
     best = math.inf
@@ -80,8 +80,6 @@ def _step_error(step, frames, indexes):
 
     if click_errs:
         best = min(err for _i, err in click_errs)
-    elif cursor_errs:
-        best = min(err for _i, err in cursor_errs) + 50.0
     return best, hit_tick, n_clicks, n_wrong
 
 
@@ -91,11 +89,8 @@ def score_lesson(steps, frames):
     weighted = 0.0
     total_weight = 0.0
     prev_done = True
-    click_spans = []
     for step in steps:
         end = min(len(frames), start + step["ticks"])
-        if step["type"] == "click":
-            click_spans.append((start, end))
         reachable = prev_done          # 前一步失败后，这一步还没轮得到
         indexes = range(start, end)
         best, hit_tick, n_clicks, n_wrong = _step_error(step, frames, indexes)
@@ -104,9 +99,13 @@ def score_lesson(steps, frames):
         norm = VIEW_RANGE if step["type"] == "move_view" else D
         progress = 0.0 if not math.isfinite(best) else max(0.0, 1.0 - best / norm)
         value = 1.0 if done else 0.9 * progress
-        # 乱点惩罚：容差外的每一次点击都按比例扣分，避免“狂点鼠标”和“不点”同分
-        if step["type"] == "click" and n_wrong:
-            value *= 1.0 / (1.0 + 0.25 * n_wrong)
+        if step["type"] == "click":
+            if n_clicks == 0:
+                # 该点击却没点：0 分。任何一次点击都严格优于不点，避免模型放弃点击。
+                value = 0.0
+            elif not done and n_wrong:
+                # 点偏了也仍然给分（只是略有折扣），绝不低于“不点”
+                value *= 1.0 / (1.0 + 0.05 * n_wrong)
         if not reachable:
             # 前序步骤没完成：只保留 1/4 的引导信号，避免“跳步”白拿高分，同时仍给进化留梯度
             value *= 0.25
@@ -123,20 +122,10 @@ def score_lesson(steps, frames):
         })
         start = end
 
-    # 非点击步骤时间窗里的点击＝乱点，整体扣分；这样“点了几次”在任何课程里都会影响得分
-    def _in_click_span(i):
-        return any(a <= i < b for a, b in click_spans)
-
-    n_spurious = sum(1 for i, f in enumerate(frames)
-                     if f["click"] and not _in_click_span(i))
-    total = weighted / total_weight if total_weight else 0.0
-    if n_spurious:
-        total *= 1.0 / (1.0 + 0.15 * n_spurious)
     return {
-        "score": total,
+        "score": weighted / total_weight if total_weight else 0.0,
         "steps": results,
         "completed": all(r["done"] for r in results),
-        "spurious_clicks": n_spurious,
     }
 
 

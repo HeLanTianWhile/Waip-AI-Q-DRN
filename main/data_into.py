@@ -1,6 +1,9 @@
 import random
 
 
+def Weight_one_or_two():
+    return random.randint(0, 1)
+
 def data_into(input=74884, output=4, memory=500, Normal=2000):
     NeuralConfigDatabase = {}
     SynapsesDatabase = {}
@@ -39,9 +42,17 @@ def data_into(input=74884, output=4, memory=500, Normal=2000):
     for i in range(len(memory_list)):
         s = str(SynapsesIndex).zfill(4)
         if i == memory - 1:
-            SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [memory_list[i], memory_list[0]]}
+            one_or_two = Weight_one_or_two()
+            if one_or_two:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": random.sample([memory_list[i], memory_list[0]], 2), "Type": "bidirectional synapse"}
+            else:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [memory_list[i], memory_list[0]], "Type": "unidirectional synapse"}
         else:
-            SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [memory_list[i], memory_list[i+1]]}
+            one_or_two = Weight_one_or_two()
+            if one_or_two:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": random.sample([memory_list[i], memory_list[i+1]], 2), "Type": "bidirectional synapse"}
+            else:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [memory_list[i], memory_list[i+1]], "Type": "unidirectional synapse"}
         SynapsesIndex += 1
     
     
@@ -50,7 +61,11 @@ def data_into(input=74884, output=4, memory=500, Normal=2000):
         pending_connections = random.sample(Hidden_list, random.randint(1, 5))
         for j in pending_connections:
             s = str(SynapsesIndex).zfill(4)
-            SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [i, j]}
+            one_or_two = Weight_one_or_two()
+            if one_or_two:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": random.sample([i, j], 2), "Type": "bidirectional synapse"}
+            else:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [i, j], "Type": "unidirectional synapse"}
             SynapsesIndex += 1
     connected_output_neurons_list = []
     for i in normal_list:
@@ -58,12 +73,20 @@ def data_into(input=74884, output=4, memory=500, Normal=2000):
         pending_connections = random.sample(candidates, random.randint(1, 5))
         for j in pending_connections:
             s = str(SynapsesIndex).zfill(4)
-            SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [i, j]}
+            one_or_two = Weight_one_or_two()
+            if one_or_two:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": random.sample([i, j], 2), "Type": "bidirectional synapse"}
+            else:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [i, j], "Type": "unidirectional synapse"}
             SynapsesIndex += 1
         pending_connections_output = random.sample(output_list, random.randint(0, 1))
         for j in pending_connections_output:
             s = str(SynapsesIndex).zfill(4)
-            SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [i, j]}
+            one_or_two = Weight_one_or_two()
+            if one_or_two:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": random.sample([i, j], 2), "Type": "bidirectional synapse"}
+            else:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [i, j], "Type": "unidirectional synapse"}
             SynapsesIndex += 1
             connected_output_neurons_list.append(j)
 
@@ -72,7 +95,11 @@ def data_into(input=74884, output=4, memory=500, Normal=2000):
         pending_connections = random.sample(Hidden_list, random.randint(1, 5))
         for j in pending_connections:
             s = str(SynapsesIndex).zfill(4)
-            SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [i, j]}
+            one_or_two = Weight_one_or_two()
+            if one_or_two:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": random.sample([i, j], 2), "Type": "bidirectional synapse"}
+            else:
+                SynapsesDatabase[s] = {"Weight": random.uniform(-1.0, 1.0), "Connection Target": [i, j], "Type": "unidirectional synapse"}
             SynapsesIndex += 1
 
     return NeuralConfigDatabase, SynapsesDatabase, NeuralStateDatabase

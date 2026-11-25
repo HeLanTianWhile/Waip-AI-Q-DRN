@@ -5,10 +5,21 @@ P_ADD_SYN = 0.08
 P_DEL_SYN = 0.03
 P_ADD_NEU = 0.08
 P_DEL_NEU = 0.03
+P_FLIP_TYPE = 0.15
+
+BI_SYN = "bidirectional synapse"
+UNI_SYN = "unidirectional synapse"
 
 
 def _nid(i):
     return f"{i:04d}"
+
+
+def _new_syn(x, y):
+    pair = [x, y] if random.random() < 0.5 else [y, x]
+    return {"Weight": random.uniform(-1.0, 1.0),
+            "Connection Target": pair,
+            "Type": UNI_SYN if random.random() < 0.5 else BI_SYN}
 
 
 def _split_roles(cfg):
@@ -46,13 +57,17 @@ def mutation(cfg_parent, syn_parent, mutation_rate=0.001):
                 b = random.choice(hidden_ids)
                 if a == b:
                     continue
-                syn[_nid(nxt)] = {"Weight": random.uniform(-1.0, 1.0),
-                                  "Connection Target": [a, b]}
+                syn[_nid(nxt)] = _new_syn(a, b)
                 nxt += 1
 
         if random.random() < P_DEL_SYN:
             for sid in random.sample(ids, min(3, len(ids))):
                 syn.pop(sid, None)
+
+        if random.random() < P_FLIP_TYPE:
+            for sid in random.sample(list(syn), min(3, len(syn))):
+                cur = syn[sid].get("Type", BI_SYN)
+                syn[sid]["Type"] = UNI_SYN if cur == BI_SYN else BI_SYN
 
     if cat["hidden"]:
         n = min(max(1, round(len(hidden_ids) * mutation_rate)), len(hidden_ids))
@@ -69,8 +84,7 @@ def mutation(cfg_parent, syn_parent, mutation_rate=0.001):
                 nxt_s = max(int(k) for k in syn) + 1
                 for _ in range(random.randint(1, 5)):
                     a = random.choice(hidden_ids + io_ids)
-                    syn[_nid(nxt_s)] = {"Weight": random.uniform(-1.0, 1.0),
-                                        "Connection Target": [a, new]}
+                    syn[_nid(nxt_s)] = _new_syn(a, new)
                     nxt_s += 1
 
         if random.random() < P_DEL_NEU:

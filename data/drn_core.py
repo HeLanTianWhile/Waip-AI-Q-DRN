@@ -81,7 +81,9 @@ class Network:
             if ia is None or ib is None:
                 continue
             weight = float(syn.get("Weight", 0.0))
-            src.append(ia); tgt.append(ib); w.append(weight)
+            is_bi = syn.get("Type", "bidirectional synapse") != "unidirectional synapse"
+            if is_bi:
+                src.append(ia); tgt.append(ib); w.append(weight)
             src.append(ib); tgt.append(ia); w.append(weight)
         self.src = np.asarray(src, dtype=np.int64)
         self.tgt = np.asarray(tgt, dtype=np.int64)
@@ -104,10 +106,11 @@ class Network:
         self.y = np.full(self.N, np.nan, dtype=np.float64)
 
     @classmethod
-    def from_arrays(cls, biases, roles, ipidx, a, b, w):
+    def from_arrays(cls, biases, roles, ipidx, a, b, w, d=None):
         """直接从紧凑数组建网（与 __init__ 的字典路径逐元素一致，省去字典开销）。
 
-        biases/roles/ipidx: 神经元数组；a/b/w: 无向突触的端点稠密索引与权重。
+        biases/roles/ipidx: 神经元数组；a/b/w: 突触两端的稠密索引与权重；
+        d: 1=双向（两头互传），0=单向（只允许 b→a），缺省全双向。
         """
         self = cls.__new__(cls)
         self.N = int(np.asarray(biases).size)
@@ -127,15 +130,25 @@ class Network:
         a = np.asarray(a, dtype=np.int64)
         b = np.asarray(b, dtype=np.int64)
         w = np.asarray(w, dtype=np.float64)
+        if d is None:
+            d = np.ones(a.size, dtype=np.int8)
+        d = np.asarray(d, dtype=np.int8)
         valid = (a != b) & (a >= 0) & (a < self.N) & (b >= 0) & (b < self.N)
-        a, b, w = a[valid], b[valid], w[valid]
+        a, b, w, d = a[valid], b[valid], w[valid], d[valid]
         # 与字典路径相同的交错顺序：src=[a0,b0,a1,b1,...]，保证求和顺序一致
-        self.src = np.empty(a.size * 2, dtype=np.int64)
-        self.tgt = np.empty(a.size * 2, dtype=np.int64)
-        self.w = np.empty(a.size * 2, dtype=np.float64)
-        self.src[0::2] = a; self.src[1::2] = b
-        self.tgt[0::2] = b; self.tgt[1::2] = a
-        self.w[0::2] = w; self.w[1::2] = w
+        n = a.size
+        src = np.empty(n * 2, dtype=np.int64)
+        tgt = np.empty(n * 2, dtype=np.int64)
+        ww = np.empty(n * 2, dtype=np.float64)
+        src[0::2] = a; src[1::2] = b
+        tgt[0::2] = b; tgt[1::2] = a
+        ww[0::2] = w; ww[1::2] = w
+        # 单向突触只保留 b→a（奇数位），双向两条都保留
+        keep = np.ones(n * 2, dtype=bool)
+        keep[0::2] = (d == 1)
+        self.src = src[keep]
+        self.tgt = tgt[keep]
+        self.w = ww[keep]
 
         self._A = None
         self._Amask = None

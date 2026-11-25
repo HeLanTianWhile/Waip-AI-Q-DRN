@@ -228,7 +228,7 @@ def evaluate(cfg, syn, screen, ticks=TICKS_PER_RUN, cursor_overlay=True,
       click_positions: [(x,y), ...] 发生点击的位置
       frames: [{cx,cy,vy,click}, ...] 供回放
 
-    compact=(biases,roles,ipidx,a,b,w) 时直接数组建网，避免构造字典。
+    compact=(biases,roles,ipidx,a,b,w,d) 时直接数组建网，避免构造字典。
     """
     net = (drn_core.Network.from_arrays(*compact) if compact is not None
            else drn_core.Network(cfg, syn))
