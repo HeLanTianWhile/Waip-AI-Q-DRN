@@ -1,0 +1,634 @@
+{
+    "0001": {
+        "Weight": 10.0,
+        "Connection Target": [
+            "74889",
+            "74881"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0002": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74890",
+            "74889"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0003": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74891",
+            "74890"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0004": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74892",
+            "74891"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0005": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74893",
+            "74892"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0006": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74894",
+            "74893"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0007": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74895",
+            "74894"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0008": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74896",
+            "74895"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0009": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74897",
+            "74896"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0010": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74898",
+            "74897"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0011": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74899",
+            "74898"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0012": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74900",
+            "74899"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0013": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74901",
+            "74900"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0014": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74902",
+            "74901"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0015": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74903",
+            "74902"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0016": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74904",
+            "74903"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0017": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74905",
+            "74904"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0018": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74906",
+            "74905"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0019": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74907",
+            "74906"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0020": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74908",
+            "74907"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0021": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74909",
+            "74908"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0022": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74910",
+            "74909"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0023": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74911",
+            "74910"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0024": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74912",
+            "74911"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0025": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74913",
+            "74912"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0026": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74914",
+            "74913"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0027": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74915",
+            "74914"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0028": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74916",
+            "74915"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0029": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74917",
+            "74916"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0030": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74918",
+            "74917"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0031": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74919",
+            "74918"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0032": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74920",
+            "74919"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0033": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74921",
+            "74920"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0034": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74922",
+            "74921"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0035": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74923",
+            "74922"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0036": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74924",
+            "74923"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0037": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74925",
+            "74924"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0038": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74926",
+            "74925"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0039": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74927",
+            "74926"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0040": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74928",
+            "74927"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0041": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74929",
+            "74928"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0042": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74930",
+            "74929"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0043": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74931",
+            "74930"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0044": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74932",
+            "74931"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0045": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74933",
+            "74932"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0046": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74934",
+            "74933"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0047": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74935",
+            "74934"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0048": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74936",
+            "74935"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0049": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74937",
+            "74936"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0050": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74938",
+            "74937"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0051": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74939",
+            "74938"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0052": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74940",
+            "74939"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0053": {
+        "Weight": 8.0,
+        "Connection Target": [
+            "74941",
+            "74940"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0054": {
+        "Weight": 6.0,
+        "Connection Target": [
+            "74942",
+            "74890"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0055": {
+        "Weight": -6.0,
+        "Connection Target": [
+            "74942",
+            "74891"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0056": {
+        "Weight": 6.0,
+        "Connection Target": [
+            "74943",
+            "74899"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0057": {
+        "Weight": -6.0,
+        "Connection Target": [
+            "74943",
+            "74900"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0058": {
+        "Weight": 6.0,
+        "Connection Target": [
+            "74944",
+            "74909"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0059": {
+        "Weight": -6.0,
+        "Connection Target": [
+            "74944",
+            "74910"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0060": {
+        "Weight": 6.0,
+        "Connection Target": [
+            "74945",
+            "74919"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0061": {
+        "Weight": -6.0,
+        "Connection Target": [
+            "74945",
+            "74920"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0062": {
+        "Weight": 6.0,
+        "Connection Target": [
+            "74946",
+            "74929"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0063": {
+        "Weight": -6.0,
+        "Connection Target": [
+            "74946",
+            "74930"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0064": {
+        "Weight": 6.0,
+        "Connection Target": [
+            "74947",
+            "74939"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0065": {
+        "Weight": -6.0,
+        "Connection Target": [
+            "74947",
+            "74940"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0066": {
+        "Weight": 0.22150423603649863,
+        "Connection Target": [
+            "74885",
+            "74944"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0067": {
+        "Weight": 0.45277231024224734,
+        "Connection Target": [
+            "74886",
+            "74944"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0068": {
+        "Weight": 0.025646962399090926,
+        "Connection Target": [
+            "74885",
+            "74945"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0069": {
+        "Weight": -0.09387785411216766,
+        "Connection Target": [
+            "74886",
+            "74945"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0070": {
+        "Weight": -0.6388381114822542,
+        "Connection Target": [
+            "74885",
+            "74946"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0071": {
+        "Weight": -0.1118397457664971,
+        "Connection Target": [
+            "74886",
+            "74946"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0072": {
+        "Weight": 0.9584730858802657,
+        "Connection Target": [
+            "74885",
+            "74947"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0073": {
+        "Weight": 0.050992644328455745,
+        "Connection Target": [
+            "74886",
+            "74947"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0074": {
+        "Weight": -0.3743880492629263,
+        "Connection Target": [
+            "74887",
+            "74942"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0075": {
+        "Weight": 0.8426483506973104,
+        "Connection Target": [
+            "74887",
+            "74943"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0076": {
+        "Weight": 2.0,
+        "Connection Target": [
+            "74888",
+            "74944"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0077": {
+        "Weight": 2.0,
+        "Connection Target": [
+            "74888",
+            "74945"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0078": {
+        "Weight": 2.0,
+        "Connection Target": [
+            "74888",
+            "74946"
+        ],
+        "Type": "unidirectional synapse"
+    },
+    "0079": {
+        "Weight": 2.0,
+        "Connection Target": [
+            "74888",
+            "74947"
+        ],
+        "Type": "unidirectional synapse"
+    }
+}

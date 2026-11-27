@@ -13,7 +13,15 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QImage
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QHBoxLayout,
+    QMainWindow,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 HTML_FILE = ROOT_DIR / "ChatUI" / "index.html"
@@ -94,18 +102,20 @@ class NeuralWorker(threading.Thread):
             )
 
     def _build_reverse_index(self):
-        """与 main.py 的无向双神经元突触语义一致，但避免每个激活神经元全表扫描。"""
+        """与 main.py 的突触语义一致：双向互传，单向只允许第二个元素传给第一个。"""
         outgoing = {}
         for synapse in self.synapses_db.values():
             targets = synapse.get("Connection Target")
             if not isinstance(targets, (list, tuple)) or len(targets) != 2:
                 continue
-            source, target = targets
-            if source == target:
+            first, second = targets
+            if first == second:
                 continue
             weight = synapse.get("Weight", 0.0)
-            outgoing.setdefault(source, []).append((target, weight))
-            outgoing.setdefault(target, []).append((source, weight))
+            bidirectional = synapse.get("Type", "bidirectional synapse") != "unidirectional synapse"
+            if bidirectional:
+                outgoing.setdefault(first, []).append((second, weight))
+            outgoing.setdefault(second, []).append((first, weight))
         return outgoing
 
     def submit(self, pixels, cursor_x, cursor_y, view_y):
@@ -229,23 +239,104 @@ class ChatWorkspaceWindow(QMainWindow):
         self.closing = False
 
         self.setWindowTitle(f"Waip AI Q-DRN · ChatUI — {agent_name}")
-        self.setFixedSize(SCREEN_W, SCREEN_H)
+        self.running = True
+        self.delay_ms = 30
         self.web = QWebEngineView(self)
         self.web.setFixedSize(SCREEN_W, SCREEN_H)
         self.web.setContextMenuPolicy(Qt.NoContextMenu)
         self.web.setFocusPolicy(Qt.NoFocus)
-        self.setCentralWidget(self.web)
+
+        bar = QWidget(self)
+        bar.setFixedHeight(38)
+        controls = QHBoxLayout(bar)
+        controls.setContentsMargins(4, 3, 4, 3)
+        controls.setSpacing(4)
+        self.btn_run = QPushButton("⏸ 暂停")
+        self.btn_reset_net = QPushButton("重置网络")
+        self.btn_reset_ui = QPushButton("重置 ChatUI")
+        self.btn_step = QPushButton("运行 1 tick")
+        self.speed = QComboBox()
+        for label, delay in (
+            ("0.25×", 120),
+            ("0.5×", 60),
+            ("1×", 30),
+            ("2×", 15),
+            ("4×", 0),
+        ):
+            self.speed.addItem(label, delay)
+        self.speed.setCurrentIndex(2)
+        for widget in (
+            self.btn_run,
+            self.btn_reset_net,
+            self.btn_reset_ui,
+            self.btn_step,
+            self.speed,
+        ):
+            widget.setFocusPolicy(Qt.NoFocus)
+            controls.addWidget(widget)
+
+        container = QWidget(self)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.web)
+        layout.addWidget(bar)
+        self.setCentralWidget(container)
+        self.setFixedSize(SCREEN_W, SCREEN_H + 38)
+
+        self.btn_run.clicked.connect(self._toggle_run)
+        self.btn_reset_net.clicked.connect(self._reset_network)
+        self.btn_reset_ui.clicked.connect(self._reset_chat_ui)
+        self.btn_step.clicked.connect(self._step_tick)
+        self.speed.currentIndexChanged.connect(self._change_speed)
+
         self.web.loadFinished.connect(self._loaded)
         self.web.load(QUrl.fromLocalFile(str(HTML_FILE)))
+
+    def _toggle_run(self):
+        self.running = not self.running
+        self.btn_run.setText("⏸ 暂停" if self.running else "▶ 运行")
+        if self.running:
+            self.capture()
+
+    def _step_tick(self):
+        if not self.running:
+            self.capture(force=True)
+
+    def _change_speed(self):
+        self.delay_ms = int(self.speed.currentData())
+
+    def _reset_network(self):
+        if self.busy:
+            QTimer.singleShot(50, self._reset_network)
+            return
+        for state in self.worker.state_db.values():
+            state["y"] = "NOT Activate"
+        self.worker.ticks = 0
+        self.setWindowTitle(
+            f"Waip AI Q-DRN · ChatUI — {self.agent_name} | 已重置网络 | tick 0"
+        )
+
+    def _reset_chat_ui(self):
+        self.cursor_x = SCREEN_W / 2.0
+        self.cursor_y = SCREEN_H / 2.0
+        self.view_y = SCREEN_H / 2.0
+        self.web.reload()
 
     def _loaded(self, ok):
         if not ok:
             self.fail(f"无法加载 {HTML_FILE}")
             return
+        # 采样窗网格是给人看的叠层，网络不应看见它，否则会干扰视觉判断。
+        self.web.page().runJavaScript(
+            "document.getElementById('aperture').style.display='none';"
+        )
         QTimer.singleShot(150, self.capture)
 
-    def capture(self):
+    def capture(self, force=False):
         if self.busy or self.closing:
+            return
+        if not self.running and not force:
             return
         image = self.web.grab().toImage()
         if image.isNull():
@@ -288,15 +379,21 @@ class ChatWorkspaceWindow(QMainWindow):
             f"qdrnSetState({self.cursor_x:.6f}, {self.cursor_y:.6f}, {self.view_y:.6f});"
         )
         if click:
+            # 所有点击都派发到光标下的真实控件（软键盘 / 发送按钮），
+            # 不再有任何 Python 端的文本注入捷径——发消息必须由网络逐键点击完成。
             script += f"qdrnClick({self.cursor_x:.6f}, {self.cursor_y:.6f});"
         self.setWindowTitle(
             f"Waip AI Q-DRN · ChatUI — {self.agent_name} | "
             f"{result['rate']:.1f} tick/s | tick {result['ticks']}"
         )
         self.busy = False
-        self.web.page().runJavaScript(
-            script, lambda _result: QTimer.singleShot(30, self.capture)
-        )
+        if self.running and not self.closing:
+            self.web.page().runJavaScript(
+                script,
+                lambda _result: QTimer.singleShot(self.delay_ms, self.capture),
+            )
+        else:
+            self.web.page().runJavaScript(script)
 
     def fail(self, message):
         print(f"[错误] ChatUI 工作区：{message}")

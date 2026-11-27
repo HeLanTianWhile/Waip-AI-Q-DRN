@@ -36,85 +36,71 @@ def load_lesson(path):
     return steps
 
 
-def _step_error(step, frames, indexes):
-    """返回 (best_err, hit_tick, n_clicks, n_wrong)。
-
-    click 步只看真实发生点击的那些 tick 的位置。“该点却没点”直接记 0，
-    保证任何一次点击都比不点更好，避免模型学会“放弃点击”。
-    """
+def _step_stats(step, frames, indexes):
     kind = step["type"]
     best = math.inf
     hit_tick = None
-    if kind == "move_view":
-        for i in indexes:
-            err = abs(frames[i]["vy"] - step["y"])
-            if err < best:
-                best = err
-            if hit_tick is None and err <= step["tol"]:
-                hit_tick = i
-        return best, hit_tick, 0, 0
-
-    cursor_errs = []
-    click_errs = []
+    hit_ticks = 0
+    n_actions = 0
     n_clicks = 0
     n_wrong = 0
     for i in indexes:
-        err = math.hypot(frames[i]["cx"] - step["x"], frames[i]["cy"] - step["y"])
-        cursor_errs.append((i, err))
-        if frames[i]["click"]:
-            n_clicks += 1
-            click_errs.append((i, err))
-            if err <= step["tol"]:
-                if hit_tick is None:
-                    hit_tick = i
-            else:
-                n_wrong += 1
-
-    if kind == "mouse_move":
-        for i, err in cursor_errs:
-            if err < best:
-                best = err
-            if hit_tick is None and err <= step["tol"]:
+        frame = frames[i]
+        previous = frames[i - 1] if i > 0 else None
+        if kind == "move_view":
+            acted = previous is not None and frame["vy"] != previous["vy"]
+            err = abs(frame["vy"] - step["y"])
+        elif kind == "mouse_move":
+            acted = previous is not None and (
+                frame["cx"] != previous["cx"] or frame["cy"] != previous["cy"]
+            )
+            err = math.hypot(frame["cx"] - step["x"], frame["cy"] - step["y"])
+        else:
+            acted = bool(frame["click"])
+            err = math.hypot(frame["cx"] - step["x"], frame["cy"] - step["y"])
+            if acted:
+                n_clicks += 1
+        if not acted:
+            continue
+        n_actions += 1
+        if err < best:
+            best = err
+        if err <= step["tol"]:
+            hit_ticks += 1
+            if hit_tick is None:
                 hit_tick = i
-        return best, hit_tick, 0, 0
-
-    if click_errs:
-        best = min(err for _i, err in click_errs)
-    return best, hit_tick, n_clicks, n_wrong
+        elif kind == "click":
+            n_wrong += 1
+    return best, hit_tick, hit_ticks, n_actions, n_clicks, n_wrong
 
 
 def score_lesson(steps, frames):
     results = []
     start = 0
-    weighted = 0.0
+    total = 0.0
     total_weight = 0.0
-    prev_done = True
     for step in steps:
         end = min(len(frames), start + step["ticks"])
-        reachable = prev_done          # 前一步失败后，这一步还没轮得到
-        indexes = range(start, end)
-        best, hit_tick, n_clicks, n_wrong = _step_error(step, frames, indexes)
-        done = reachable and hit_tick is not None
-        prev_done = done
+        window = max(0, end - start)
+        best, hit_tick, hit_ticks, n_actions, n_clicks, n_wrong = _step_stats(
+            step, frames, range(start, end)
+        )
         norm = VIEW_RANGE if step["type"] == "move_view" else D
-        progress = 0.0 if not math.isfinite(best) else max(0.0, 1.0 - best / norm)
-        value = 1.0 if done else 0.9 * progress
-        if step["type"] == "click":
-            if n_clicks == 0:
-                # 该点击却没点：0 分。任何一次点击都严格优于不点，避免模型放弃点击。
-                value = 0.0
-            elif not done and n_wrong:
-                # 点偏了也仍然给分（只是略有折扣），绝不低于“不点”
-                value *= 1.0 / (1.0 + 0.05 * n_wrong)
-        if not reachable:
-            # 前序步骤没完成：只保留 1/4 的引导信号，避免“跳步”白拿高分，同时仍给进化留梯度
-            value *= 0.25
-        weighted += value * step["weight"]
+        if math.isfinite(best):
+            excess = max(0.0, best - step["tol"])
+            progress = max(0.0, 1.0 - excess / norm)
+        else:
+            progress = 0.0
+        value = step["weight"] * progress
+        total += value
         total_weight += step["weight"]
         results.append({
             "type": step["type"],
-            "done": done,
+            "done": hit_ticks > 0,
             "tick": hit_tick,
+            "ticks": window,
+            "hit_ticks": hit_ticks,
+            "actions": n_actions,
             "error": None if not math.isfinite(best) else round(best, 3),
             "clicks": n_clicks,
             "wrong_clicks": n_wrong,
@@ -123,7 +109,8 @@ def score_lesson(steps, frames):
         start = end
 
     return {
-        "score": weighted / total_weight if total_weight else 0.0,
+        "score": total,
+        "max_score": total_weight,
         "steps": results,
         "completed": all(r["done"] for r in results),
     }

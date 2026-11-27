@@ -253,7 +253,7 @@ const ROWS = [
   ["q","w","e","r","t","y","u","i","o","p"],
   ["a","s","d","f","g","h","j","k","l"],
   ["中/英","z","x","c","v","b","n","m","⌫"],
-  ["空格","Enter"],
+  ["，","空格","？","Enter"],
 ];
 const kb = document.getElementById("kb");
 ROWS.forEach((row, ri) => {
@@ -285,6 +285,9 @@ const DICT = {
   hao:  ["好","号","浩","豪","耗"],
   wo:   ["我","窝","握","卧","沃"],
   zai:  ["在","再","载","仔","宰"],
+  dao:  ["到","道","倒","岛","导"],
+  di:   ["底","地","第","低","滴"],
+  bu:   ["不","部","步","布","补"],
   shi:  ["是","时","事","十","史"],
   de:   ["的","得","地","德","底"],
   ma:   ["吗","妈","码","马","骂"],
@@ -356,6 +359,7 @@ function pressKey(k){
     renderField(); return;
   }
   if (k === "Enter"){ send(); return; }
+  if (k === "，" || k === "？"){ committed += k; renderField(); return; }
   if (mode === "en"){ committed += k; renderField(); return; }
 
   buffer += k;
@@ -417,6 +421,10 @@ function placeView(y){
 function qdrnSetState(x, y, viewCenterY){
   placeCursor(x, y);
   placeView(viewCenterY);
+}
+
+function qdrnLastMessageCount(){
+  return document.querySelectorAll("#log > div").length;
 }
 
 /* 网络点击：显示点击环，并向光标下的真实控件派发完整点击事件。 */
