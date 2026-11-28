@@ -209,7 +209,7 @@
     <span>视野 <span class="mono" id="viewY">422</span></span>
     <span>采样 <span class="mono">390×192</span></span>
     <span class="grow"></span>
-    <span class="mono">390×844</span>
+    <span class="mono" id="sideTag">AI 端</span>
   </div>
 
   <div class="log" id="log"></div>
@@ -248,6 +248,11 @@
 </div>
 
 <script>
+/* side=user 是真人用户端；默认仍为 AI 端，训练/按键测量行为不变。 */
+const IS_USER = new URLSearchParams(location.search).get("side") === "user";
+const SIDE = IS_USER ? "user" : "ai";
+const outbox = [];
+
 /* ───────── 键盘布局：4 行，弹性铺满 390 ───────── */
 const ROWS = [
   ["q","w","e","r","t","y","u","i","o","p"],
@@ -372,17 +377,39 @@ function commit(ch){
   renderCands(); renderField();
 }
 
-function send(){
-  const text = (committed + buffer).trim();
-  if (!text){ return; }
+function appendMessage(role, text){
   const div = document.createElement("div");
-  div.className = "msg ai";
-  div.innerHTML = `<span class="who">AI</span>${text}`;
+  div.className = "msg " + role;
+  const who = document.createElement("span");
+  who.className = "who";
+  who.textContent = role === "user" ? "用户" : "AI";
+  div.appendChild(who);
+  div.appendChild(document.createTextNode(text));
   const log = document.getElementById("log");
   log.appendChild(div);
   log.scrollTop = 1e9;
+}
+
+function send(){
+  const text = (committed + buffer).trim();
+  if (!text){ return; }
+  appendMessage(SIDE, text);
+  outbox.push({role: SIDE, text: text});
   committed = ""; buffer = ""; candList = [];
   renderCands(); renderField();
+}
+
+/* 对端消息只负责显示，不进入 outbox，避免两个窗口来回复制。 */
+function qdrnAppendMessage(role, text){
+  role = role === "user" ? "user" : "ai";
+  text = String(text).trim();
+  if (text) appendMessage(role, text);
+}
+
+function qdrnTakeOutbox(){
+  const pending = outbox.slice();
+  outbox.length = 0;
+  return JSON.stringify(pending);
 }
 
 document.getElementById("send").addEventListener("mousedown", e => { e.preventDefault(); send(); });
@@ -450,14 +477,22 @@ function qdrnClick(x, y){
   }
 }
 
-/* 人类鼠标/触摸不能移动虚拟光标，也不能绕过网络直接操作 UI。 */
-for (const type of ["mousemove", "mousedown", "mouseup", "click", "wheel", "touchstart", "touchmove"]){
-  document.addEventListener(type, event => {
-    if (!event.__qdrn){
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }
-  }, true);
+if (IS_USER){
+  /* 用户端由真人直接点击软键盘，不显示网络的虚拟光标与采样窗。 */
+  document.getElementById("sideTag").textContent = "用户端";
+  cur.style.display = "none";
+  ap.style.display = "none";
+  ring.style.display = "none";
+} else {
+  /* AI 端：人类鼠标/触摸不能移动虚拟光标，也不能绕过网络直接操作 UI。 */
+  for (const type of ["mousemove", "mousedown", "mouseup", "click", "wheel", "touchstart", "touchmove"]){
+    document.addEventListener(type, event => {
+      if (!event.__qdrn){
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    }, { capture:true, passive:false });
+  }
 }
 
 /* 初始：光标与视野都位于屏幕中央，但之后各自独立。 */

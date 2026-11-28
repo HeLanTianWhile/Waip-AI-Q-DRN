@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """ChatUI 工作区：像素/位置输入与鼠标/视野/点击输出的闭环。"""
 
+import json
 import math
 import queue
 import sys
@@ -24,7 +25,8 @@ from PySide6.QtWidgets import (
 )
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-HTML_FILE = ROOT_DIR / "ChatUI" / "index.html"
+HTML_FILE = ROOT_DIR / "ChatUI" / "index.html"        # AI 端（网络像素输入唯一来源）
+USER_HTML_FILE = ROOT_DIR / "ChatUI" / "user.html"    # 用户端（独立页面，不与 AI 端共用 UI/状态）
 
 SCREEN_W, SCREEN_H = 390, 844
 VIEW_W, VIEW_H = 390, 192
@@ -245,6 +247,10 @@ class ChatWorkspaceWindow(QMainWindow):
         self.web.setFixedSize(SCREEN_W, SCREEN_H)
         self.web.setContextMenuPolicy(Qt.NoContextMenu)
         self.web.setFocusPolicy(Qt.NoFocus)
+        # 左侧 self.web 是 AI 唯一会被截屏的页面；右侧仅供真人操作。
+        self.user_web = QWebEngineView(self)
+        self.user_web.setFixedSize(SCREEN_W, SCREEN_H)
+        self.user_web.setContextMenuPolicy(Qt.NoContextMenu)
 
         bar = QWidget(self)
         bar.setFixedHeight(38)
@@ -275,14 +281,21 @@ class ChatWorkspaceWindow(QMainWindow):
             widget.setFocusPolicy(Qt.NoFocus)
             controls.addWidget(widget)
 
+        panes = QWidget(self)
+        panes_layout = QHBoxLayout(panes)
+        panes_layout.setContentsMargins(0, 0, 0, 0)
+        panes_layout.setSpacing(0)
+        panes_layout.addWidget(self.web)
+        panes_layout.addWidget(self.user_web)
+
         container = QWidget(self)
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self.web)
+        layout.addWidget(panes)
         layout.addWidget(bar)
         self.setCentralWidget(container)
-        self.setFixedSize(SCREEN_W, SCREEN_H + 38)
+        self.setFixedSize(SCREEN_W * 2, SCREEN_H + 38)
 
         self.btn_run.clicked.connect(self._toggle_run)
         self.btn_reset_net.clicked.connect(self._reset_network)
@@ -291,7 +304,15 @@ class ChatWorkspaceWindow(QMainWindow):
         self.speed.currentIndexChanged.connect(self._change_speed)
 
         self.web.loadFinished.connect(self._loaded)
+        self.user_web.loadFinished.connect(self._user_loaded)
         self.web.load(QUrl.fromLocalFile(str(HTML_FILE)))
+        # 用户端加载独立的 user.html：正常光标、不拦截真人事件、气泡按“我/对方”对齐，
+        # 与 AI 端 index.html 完全隔离，仅通过 qdrnTakeOutbox/qdrnAppendMessage 交换消息。
+        self.user_web.load(QUrl.fromLocalFile(str(USER_HTML_FILE)))
+
+        self._sync_timer = QTimer(self)
+        self._sync_timer.timeout.connect(self._sync_messages)
+        self._sync_timer.start(80)
 
     def _toggle_run(self):
         self.running = not self.running
@@ -322,6 +343,40 @@ class ChatWorkspaceWindow(QMainWindow):
         self.cursor_y = SCREEN_H / 2.0
         self.view_y = SCREEN_H / 2.0
         self.web.reload()
+        self.user_web.reload()
+
+    def _user_loaded(self, ok):
+        if not ok and not self.closing:
+            self.fail("无法加载用户端 ChatUI")
+
+    def _sync_messages(self):
+        """同步两侧的本地发送记录；AI 的像素输入仍只从左侧 self.web 截取。"""
+        if self.closing:
+            return
+        for source, target in (
+            (self.web, self.user_web),
+            (self.user_web, self.web),
+        ):
+            source.page().runJavaScript(
+                "qdrnTakeOutbox()",
+                lambda result, target=target: self._forward_messages(result, target),
+            )
+
+    def _forward_messages(self, result, target):
+        if self.closing or not isinstance(result, str):
+            return
+        try:
+            messages = json.loads(result)
+        except (TypeError, ValueError):
+            return
+        for message in messages:
+            role = "user" if message.get("role") == "user" else "ai"
+            text = str(message.get("text", ""))
+            script = (
+                f"qdrnAppendMessage({json.dumps(role)}, "
+                f"{json.dumps(text, ensure_ascii=False)});"
+            )
+            target.page().runJavaScript(script)
 
     def _loaded(self, ok):
         if not ok:
@@ -402,6 +457,7 @@ class ChatWorkspaceWindow(QMainWindow):
     def closeEvent(self, event):
         if not self.closing:
             self.closing = True
+            self._sync_timer.stop()
             self.worker.stop()
             self.worker.join(30)
             if self.worker.is_alive():

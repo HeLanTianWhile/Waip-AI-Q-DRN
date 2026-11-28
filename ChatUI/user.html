@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=390, initial-scale=1">
+<title>Q-DRN · ChatUI（用户端 · 390×844）</title>
+<style>
+  /* ── 用户端是独立页面：与 AI 端(index.html)不共用 CSS/JS，也不继承网络端的视觉与事件行为 ── */
+  :root{
+    --bg:#0f0f0f;
+    --panel:#171717;
+    --panel-2:#131313;
+    --line:#292929;
+    --text:#e3e3e3;
+    --muted:#888888;
+    --accent:#979797;
+    --accent-dim:#646464;
+    --mine:#232323;     /* 我自己发的气泡 */
+    --theirs:#242424;   /* 对方（AI）发的气泡 */
+    --screen-w:390px;
+    --screen-h:844px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:#050505;
+    color:var(--text);
+    font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+    cursor:default;          /* 用户端显示真实鼠标，与 AI 端的 cursor:none 隔离 */
+    overflow:hidden;
+    display:flex;align-items:center;justify-content:center;
+  }
+
+  #app{
+    position:relative;
+    width:var(--screen-w);height:var(--screen-h);
+    flex:0 0 auto;
+    overflow:hidden;
+    display:flex;flex-direction:column;
+    background:var(--bg);
+    box-shadow:0 0 0 1px #2a2a2a, 0 18px 60px rgba(0,0,0,.8);
+  }
+
+  /* ── 状态条 ── */
+  .status{
+    height:26px;flex:0 0 auto;
+    display:flex;align-items:center;gap:10px;
+    padding:0 10px;
+    border-bottom:1px solid var(--line);
+    background:var(--panel-2);
+    font-size:10.5px;color:var(--muted);
+    white-space:nowrap;overflow:hidden;
+  }
+  .status .tag{
+    padding:1px 7px;border:1px solid var(--line);border-radius:999px;
+    color:var(--text);flex:0 0 auto;
+  }
+  .status .tag.ime{border-color:#3a3a3a;color:var(--accent)}
+  .status .grow{flex:1}
+
+  /* ── 聊天区：气泡方向按“我/对方”判定，不按绝对 role ── */
+  .log{
+    flex:1 1 auto;overflow-y:auto;
+    padding:14px 12px 10px;
+    display:flex;flex-direction:column;gap:10px;
+  }
+  .msg{
+    max-width:86%;
+    padding:8px 11px;
+    border-radius:9px;
+    line-height:1.65;
+    font-size:13.5px;
+    border:1px solid var(--line);
+  }
+  .msg.mine{align-self:flex-end;background:var(--mine);border-color:#2e2e2e}
+  .msg.theirs{align-self:flex-start;background:var(--theirs)}
+  .msg .who{
+    display:block;font-size:10px;letter-spacing:1px;
+    color:var(--muted);margin-bottom:3px;
+  }
+  .msg.mine .who{color:var(--accent)}
+  .log::-webkit-scrollbar{width:5px}
+  .log::-webkit-scrollbar-thumb{background:#252525;border-radius:3px}
+
+  /* ── 候选栏 ── */
+  .candbar{
+    flex:0 0 auto;
+    display:flex;align-items:center;gap:6px;
+    padding:5px 10px;
+    border-top:1px solid var(--line);
+    background:var(--panel);
+    min-height:34px;
+    overflow-x:auto;
+  }
+  .candbar .lbl{font-size:10px;color:var(--muted);letter-spacing:1px;flex:0 0 auto}
+  .cand{
+    display:inline-flex;align-items:center;gap:4px;
+    padding:2px 8px;border:1px solid var(--line);border-radius:5px;
+    background:var(--panel-2);font-size:14px;color:var(--text);
+    flex:0 0 auto;transition:.12s;
+  }
+  .cand .num{font-size:9px;color:var(--muted);font-family:Consolas,monospace}
+  .cand.on{border-color:var(--accent-dim);color:#e8e8e8}
+
+  /* ── 输入框 ── */
+  .composer{
+    flex:0 0 auto;
+    display:flex;align-items:center;gap:8px;
+    padding:7px 10px;
+    border-top:1px solid var(--line);
+    background:var(--panel-2);
+  }
+  .field{
+    flex:1;min-height:32px;
+    display:flex;align-items:center;flex-wrap:wrap;
+    gap:2px;padding:4px 9px;
+    border:1px solid var(--line);border-radius:7px;
+    background:#121212;
+    font-size:13.5px;line-height:1.5;
+    overflow:hidden;
+  }
+  .field .done{color:var(--text)}
+  .field .comp{
+    color:var(--accent);
+    border-bottom:1.5px solid var(--accent-dim);
+    padding-bottom:1px;
+    font-family:Consolas,monospace;letter-spacing:1px;
+  }
+  .caret{width:1.5px;height:16px;background:var(--accent);animation:blink 1.1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .field .ph{color:#4f4f4f;font-size:12px}
+  .sendbtn{
+    flex:0 0 auto;
+    padding:7px 12px;border:1px solid var(--accent-dim);border-radius:7px;
+    color:var(--accent);background:#151515;font-size:12.5px;
+  }
+
+  /* ── 软键盘（与 AI 端一致，便于两边按键坐标/行为相同） ── */
+  .kb{
+    flex:0 0 auto;
+    padding:5px 5px 9px;
+    border-top:1px solid var(--line);
+    background:var(--panel);
+    display:flex;flex-direction:column;gap:5px;
+  }
+  .kbrow{display:flex;gap:5px;width:100%}
+  .key{
+    flex:1 1 0;min-width:0;height:36px;
+    display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--line);border-radius:5px;
+    background:#151515;color:#adadad;
+    font-size:13px;font-family:Consolas,monospace;
+    white-space:nowrap;overflow:hidden;
+    transition:.08s;
+    cursor:pointer;
+  }
+  .key.active{background:#232323;border-color:var(--accent-dim);color:#e8e8e8}
+  .key.wide{flex:2 1 0;font-family:inherit;font-size:12px}
+  .key.xwide{flex:3 1 0;font-family:inherit;font-size:12px}
+  .key.fn{color:#979797;border-color:#2e2e2e}
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <div class="status">
+    <span class="tag ime" id="imeTag">中文（拼音）</span>
+    <span>真人用户端 · 直接点击键盘输入</span>
+    <span class="grow"></span>
+    <span class="tag" id="sideTag">用户端</span>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <div class="candbar">
+    <span class="lbl">候选</span>
+    <div id="cands"></div>
+  </div>
+
+  <div class="composer">
+    <div class="field" id="field">
+      <span class="ph" id="ph">点击屏幕键盘输入…</span>
+      <span class="done" id="done"></span>
+      <span class="comp" id="comp"></span>
+      <span class="caret"></span>
+    </div>
+    <button class="sendbtn" id="send">发送</button>
+  </div>
+
+  <div class="kb" id="kb"></div>
+</div>
+
+<script>
+/* 用户端是独立实例：SIDE 恒为 user，有自己的 IME 状态与 outbox，
+   与 AI 端页面互不共享 DOM / JS 状态。仅通过 Python 同步桥交换消息文本。 */
+const SIDE = "user";
+const outbox = [];
+
+/* ───────── 键盘布局：4 行，弹性铺满 390（与 AI 端一致） ───────── */
+const ROWS = [
+  ["q","w","e","r","t","y","u","i","o","p"],
+  ["a","s","d","f","g","h","j","k","l"],
+  ["中/英","z","x","c","v","b","n","m","⌫"],
+  ["，","空格","？","Enter"],
+];
+const kb = document.getElementById("kb");
+ROWS.forEach(row => {
+  const div = document.createElement("div");
+  div.className = "kbrow";
+  row.forEach(k => {
+    const el = document.createElement("div");
+    el.className = "key";
+    el.textContent = k;
+    el.dataset.k = k;
+    if (k === "空格") el.classList.add("xwide");
+    else if (k.length > 1 && k !== "中/英") el.classList.add("wide");
+    if (k === "中/英" || k === "⌫" || k === "Enter" || k === "空格")
+      el.classList.add("fn");
+    el.addEventListener("mousedown", e => { e.preventDefault(); pressKey(k); });
+    div.appendChild(el);
+  });
+  kb.appendChild(div);
+});
+
+/* ───────── 输入法状态（独立于 AI 端） ───────── */
+let mode = "zh";
+let buffer = "";
+let committed = "";
+let candList = [];
+
+const DICT = {
+  ni:   ["你","呢","泥","拟","倪"],
+  hao:  ["好","号","浩","豪","耗"],
+  wo:   ["我","窝","握","卧","沃"],
+  zai:  ["在","再","载","仔","宰"],
+  dao:  ["到","道","倒","岛","导"],
+  di:   ["底","地","第","低","滴"],
+  bu:   ["不","部","步","布","补"],
+  shi:  ["是","时","事","十","史"],
+  de:   ["的","得","地","德","底"],
+  ma:   ["吗","妈","码","马","骂"],
+  hui:  ["会","回","汇","辉","绘"],
+  yi:   ["一","以","已","意","依"],
+};
+
+const imeTag = document.getElementById("imeTag");
+const comp = document.getElementById("comp");
+const done = document.getElementById("done");
+const ph   = document.getElementById("ph");
+const cands = document.getElementById("cands");
+
+function renderCands(){
+  cands.innerHTML = "";
+  candList.forEach((c, i) => {
+    const el = document.createElement("div");
+    el.className = "cand" + (i === 0 ? " on" : "");
+    el.innerHTML = `<span class="num">${i+1}</span><span>${c}</span>`;
+    el.addEventListener("mousedown", e => { e.preventDefault(); commit(c); });
+    cands.appendChild(el);
+  });
+  if (!candList.length){
+    const el = document.createElement("span");
+    el.style.cssText = "font-size:11px;color:#4f4f4f";
+    el.textContent = mode === "zh" ? "（等待键入按键）" : "（英文模式：直接上屏）";
+    cands.appendChild(el);
+  }
+}
+
+function renderField(){
+  done.textContent = committed;
+  comp.textContent = buffer;
+  ph.style.display = (committed || buffer) ? "none" : "inline";
+}
+
+function refreshCands(){
+  if (mode === "en" || !buffer){ candList = []; renderCands(); return; }
+  candList = DICT[buffer] || [buffer.toUpperCase()];
+  renderCands();
+}
+
+function flash(el){
+  el.classList.add("active");
+  setTimeout(() => el.classList.remove("active"), 180);
+}
+
+function pressKey(k){
+  const el = [...document.querySelectorAll(".key")].find(e => e.dataset.k === k);
+  if (el) flash(el);
+
+  if (k === "中/英"){
+    mode = mode === "zh" ? "en" : "zh";
+    buffer = ""; candList = [];
+    imeTag.textContent = mode === "zh" ? "中文（拼音）" : "英文";
+    renderCands(); renderField();
+    return;
+  }
+  if (k === "⌫"){
+    buffer = buffer.slice(0, -1);
+    refreshCands(); renderField();
+    return;
+  }
+  if (k === "空格"){
+    if (mode === "zh"){
+      if (candList.length) commit(candList[0]);
+      else { committed += " "; }
+    } else { committed += " "; }
+    renderField(); return;
+  }
+  if (k === "Enter"){ send(); return; }
+  if (k === "，" || k === "？"){ committed += k; renderField(); return; }
+  if (mode === "en"){ committed += k; renderField(); return; }
+
+  buffer += k;
+  refreshCands(); renderField();
+}
+
+function commit(ch){
+  committed += ch;
+  buffer = ""; candList = [];
+  renderCands(); renderField();
+}
+
+/* 气泡方向按“我/对方”判定：sender === SIDE 是我自己（靠右），否则是对方（靠左）。
+   这样用户端：自己发的靠右，AI 发的靠左——与普通聊天视角一致。 */
+function appendMessage(role, text){
+  const mine = role === SIDE;
+  const div = document.createElement("div");
+  div.className = "msg " + (mine ? "mine" : "theirs");
+  const who = document.createElement("span");
+  who.className = "who";
+  who.textContent = mine ? "我" : (role === "ai" ? "AI" : "用户");
+  div.appendChild(who);
+  div.appendChild(document.createTextNode(text));
+  const log = document.getElementById("log");
+  log.appendChild(div);
+  log.scrollTop = 1e9;
+}
+
+function send(){
+  const text = (committed + buffer).trim();
+  if (!text){ return; }
+  appendMessage(SIDE, text);
+  outbox.push({role: SIDE, text: text});
+  committed = ""; buffer = ""; candList = [];
+  renderCands(); renderField();
+}
+
+/* 对端（AI）消息只负责显示，不进入 outbox，避免两个窗口来回复制。 */
+function qdrnAppendMessage(role, text){
+  role = role === "user" ? "user" : "ai";
+  text = String(text).trim();
+  if (text) appendMessage(role, text);
+}
+
+function qdrnTakeOutbox(){
+  const pending = outbox.slice();
+  outbox.length = 0;
+  return JSON.stringify(pending);
+}
+
+document.getElementById("send").addEventListener("mousedown", e => { e.preventDefault(); send(); });
+
+/* 初始状态。 */
+document.getElementById("log").scrollTop = 1e9;
+renderCands(); renderField();
+</script>
+</body>
+</html>
